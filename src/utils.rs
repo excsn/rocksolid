@@ -1,7 +1,7 @@
 // rocksolid/src/utils.rs
 
-use crate::cf_store::RocksDbCfStore; // Use RocksDbCfStore
-use crate::config::RocksDbCfStoreConfig; // Use RocksDbCfStoreConfig
+use crate::cf_store::RocksDbCFStore; // Use RocksDbCFStore
+use crate::config::RocksDbCFStoreConfig; // Use RocksDbCFStoreConfig
 use crate::error::{StoreError, StoreResult};
 use crate::CFOperations;
 use log::{error, info, warn};
@@ -12,15 +12,15 @@ use std::path::Path;
 /// including all configured Column Families.
 ///
 /// # Arguments
-/// * `src_cfg` - Configuration for the source `RocksDbCfStore`.
-/// * `dst_cfg` - Configuration for the destination `RocksDbCfStore`.
+/// * `src_cfg` - Configuration for the source `RocksDbCFStore`.
+/// * `dst_cfg` - Configuration for the destination `RocksDbCFStore`.
 ///               The `dst_cfg.column_families_to_open` should include all CFs present in the source
 ///               that need to be migrated. CFs not listed in `dst_cfg.column_families_to_open`
 ///               but present in source will be skipped.
 /// * `validate` - If true, attempts to validate each key after migration (can be slow).
 pub fn migrate_db(
-  src_config: RocksDbCfStoreConfig,
-  dst_config: RocksDbCfStoreConfig,
+  src_config: RocksDbCFStoreConfig,
+  dst_config: RocksDbCFStoreConfig,
   validate: bool,
 ) -> StoreResult<()> {
   info!(
@@ -28,8 +28,8 @@ pub fn migrate_db(
     src_config.path, dst_config.path
   );
 
-  let src_store = RocksDbCfStore::open(src_config.clone())?; // Clone for potential reuse in validation
-  let dst_store = RocksDbCfStore::open(dst_config.clone())?; // Clone for potential reuse
+  let src_store = RocksDbCFStore::open(src_config.clone())?; // Clone for potential reuse in validation
+  let dst_store = RocksDbCFStore::open(dst_config.clone())?; // Clone for potential reuse
 
   // Get the list of actual CFs present in the source database.
   // DB::list_cf can be used, but requires only DB options.
@@ -64,12 +64,12 @@ pub fn migrate_db(
     let mut migrated_records_count_cf = 0;
 
     // Iterate over the source CF.
-    // We need a way to iterate raw key/value pairs from RocksDbCfStore.
-    // Let's define a helper within RocksDbCfStore for this purpose or add to CfOperations.
+    // We need a way to iterate raw key/value pairs from RocksDbCFStore.
+    // Let's define a helper within RocksDbCFStore for this purpose or add to CfOperations.
     // For now, assuming a method like `iterate_cf_raw_tuples` exists on `src_store`.
 
     // Re-defining the iterator logic here for self-containment for now.
-    // Ideally, RocksDbCfStore would provide a robust iterator.
+    // Ideally, RocksDbCFStore would provide a robust iterator.
     let db_raw = src_store.db_raw();
     let raw_kvs_iterator = {
       let read_opts = ReadOptions::default();
@@ -170,19 +170,19 @@ pub fn migrate_db(
 ///
 /// # Arguments
 /// * `backup_path` - Directory where the checkpoint will be created. This directory must exist or be creatable.
-/// * `cfg_to_open_db` - Configuration for the `RocksDbCfStore` to be backed up.
+/// * `cfg_to_open_db` - Configuration for the `RocksDbCFStore` to be backed up.
 ///                      This is used to open the database before creating the checkpoint.
 ///
 /// # Errors
 /// Returns `StoreError` if opening the database or creating the checkpoint fails.
-pub fn backup_db(backup_path: &Path, cfg_to_open_db: RocksDbCfStoreConfig) -> StoreResult<()> {
+pub fn backup_db(backup_path: &Path, cfg_to_open_db: RocksDbCFStoreConfig) -> StoreResult<()> {
   info!(
     "Starting backup of DB at '{}' to checkpoint directory '{}'",
     cfg_to_open_db.path,
     backup_path.display()
   );
 
-  let store = RocksDbCfStore::open(cfg_to_open_db)?;
+  let store = RocksDbCFStore::open(cfg_to_open_db)?;
 
   let db_raw = store.db_raw();
   let checkpoint = Checkpoint::new(&db_raw) // db_raw() gives Arc<DB>

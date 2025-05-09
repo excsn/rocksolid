@@ -1,19 +1,16 @@
-// examples/merge_router.rs
-
 use matchit::Params;
 use rocksdb::MergeOperands;
 use rocksolid::{
-  cf_store::{CFOperations, RocksDbCfStore}, // Use RocksDbCfStore
-  config::{BaseCfConfig, RockSolidMergeOperatorCfConfig as MergeOperatorConfig, RocksDbCfStoreConfig}, // Use CF-aware configs
-  merge_routing::{MergeRouteHandlerFn, MergeRouterBuilder},
+  cf_store::{CFOperations, RocksDbCFStore},
+  config::{BaseCfConfig, RocksDbCFStoreConfig},
+  merge_routing::MergeRouterBuilder,
   MergeValue,
   MergeValueOperator,
-  StoreError,
   StoreResult,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use tempfile::tempdir; // For cf_configs
+use tempfile::tempdir;
 
 // --- Merge Handlers (remain the same) ---
 fn string_append_handler(
@@ -122,7 +119,7 @@ fn main() -> StoreResult<()> {
   );
   cf_configs.insert(DEFAULT_CF.to_string(), BaseCfConfig::default()); // Default CF without this merge op
 
-  let config = RocksDbCfStoreConfig {
+  let config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![DEFAULT_CF.to_string(), LISTS_CF.to_string(), SETS_CF.to_string()],
@@ -131,7 +128,7 @@ fn main() -> StoreResult<()> {
   };
 
   // --- Open and Use ---
-  let store = RocksDbCfStore::open(config)?;
+  let store = RocksDbCFStore::open(config)?;
 
   // Merge into list (targets LISTS_CF)
   let list_key = "/lists/shopping"; // Key matches a route

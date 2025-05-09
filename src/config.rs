@@ -3,21 +3,41 @@
 //! for backward compatibility (e.g., for the default-CF transactional store).
 
 use crate::tuner::{Tunable, TuningProfile};
+use crate::StoreError;
 use rocksdb::{
     MergeOperands, Options as RocksDbOptions, DBRecoveryMode as RocksDbRecoveryMode,
     DBCompressionType as RocksDbCompressionType, SliceTransform,
 };
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::cmp::Ordering;
 
-// --- SECTION 1: Existing/Original Configuration (for backward compatibility & default TxnStore) ---
+// --- SECTION 1: Configuration ---
 
 /// Available compression types for RocksDB (Original Enum).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionType {
   None, Bz2, Lz4, Lz4hc, Snappy, Zlib, Zstd,
+}
+
+// --- Implementation for CompressionType ---
+impl FromStr for CompressionType {
+  type Err = StoreError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match value.to_lowercase().as_str() {
+      "none" => Ok(CompressionType::None),
+      "bz2" => Ok(CompressionType::Bz2),
+      "lz4" => Ok(CompressionType::Lz4),
+      "lz4hc" => Ok(CompressionType::Lz4hc),
+      "snappy" => Ok(CompressionType::Snappy),
+      "zlib" => Ok(CompressionType::Zlib),
+      "zstd" => Ok(CompressionType::Zstd),
+      _ => Err(StoreError::InvalidConfiguration(value.to_string())),
+    }
+  }
 }
 
 /// Write Ahead Log (WAL) recovery modes for RocksDB (Original Enum, can be shared or duplicated if slightly different).
@@ -30,6 +50,23 @@ pub enum RecoveryMode { // This is now also used by new configs.
   PointInTime,
   SkipAnyCorruptedRecord,
   TolerateCorruptedTailRecords,
+}
+
+// --- Implementation for RecoveryMode ---
+impl FromStr for RecoveryMode {
+  type Err = StoreError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match value.to_lowercase().as_str() {
+      "absolute" | "absoluteconsistency" => Ok(RecoveryMode::AbsoluteConsistency),
+      "pointintime" | "point_in_time" => Ok(RecoveryMode::PointInTime), // common variations
+      "skipanycorruptedrecord" | "skip_corrupted" => Ok(RecoveryMode::SkipAnyCorruptedRecord),
+      "toleratecorruptedtailrecords" | "tolerate_corrupted_tail" => {
+          Ok(RecoveryMode::TolerateCorruptedTailRecords)
+      }
+      _ => Err(StoreError::InvalidConfiguration(value.to_string())),
+    }
+  }
 }
 
 /// Type alias for a custom comparator function (Original).
@@ -103,25 +140,25 @@ impl Default for RocksDbConfig {
 }
 
 // Helper Functions for Original RocksDbConfig (internal or pub(crate))
-pub(crate) fn convert_compression_type(ct: CompressionType) -> RocksDbCompressionType {
-    match ct {
-        CompressionType::None => RocksDbCompressionType::None,
-        CompressionType::Bz2 => RocksDbCompressionType::Bz2,
-        CompressionType::Lz4 => RocksDbCompressionType::Lz4,
-        CompressionType::Lz4hc => RocksDbCompressionType::Lz4hc,
-        CompressionType::Snappy => RocksDbCompressionType::Snappy,
-        CompressionType::Zlib => RocksDbCompressionType::Zlib,
-        CompressionType::Zstd => RocksDbCompressionType::Zstd,
-    }
+pub fn convert_compression_type(ct: CompressionType) -> RocksDbCompressionType {
+  match ct {
+    CompressionType::None => RocksDbCompressionType::None,
+    CompressionType::Bz2 => RocksDbCompressionType::Bz2,
+    CompressionType::Lz4 => RocksDbCompressionType::Lz4,
+    CompressionType::Lz4hc => RocksDbCompressionType::Lz4hc,
+    CompressionType::Snappy => RocksDbCompressionType::Snappy,
+    CompressionType::Zlib => RocksDbCompressionType::Zlib,
+    CompressionType::Zstd => RocksDbCompressionType::Zstd,
+  }
 }
 
-pub(crate) fn convert_recovery_mode(rm: RecoveryMode) -> RocksDbRecoveryMode {
-    match rm {
-        RecoveryMode::AbsoluteConsistency => RocksDbRecoveryMode::AbsoluteConsistency,
-        RecoveryMode::PointInTime => RocksDbRecoveryMode::PointInTime,
-        RecoveryMode::SkipAnyCorruptedRecord => RocksDbRecoveryMode::SkipAnyCorruptedRecord,
-        RecoveryMode::TolerateCorruptedTailRecords => RocksDbRecoveryMode::TolerateCorruptedTailRecords,
-    }
+pub fn convert_recovery_mode(rm: RecoveryMode) -> RocksDbRecoveryMode {
+  match rm {
+    RecoveryMode::AbsoluteConsistency => RocksDbRecoveryMode::AbsoluteConsistency,
+    RecoveryMode::PointInTime => RocksDbRecoveryMode::PointInTime,
+    RecoveryMode::SkipAnyCorruptedRecord => RocksDbRecoveryMode::SkipAnyCorruptedRecord,
+    RecoveryMode::TolerateCorruptedTailRecords => RocksDbRecoveryMode::TolerateCorruptedTailRecords,
+  }
 }
 
 // --- SECTION 2: New CF-Aware Configuration Structures ---
@@ -163,9 +200,9 @@ pub struct BaseCfConfig {
   pub merge_operator: Option<RockSolidMergeOperatorCfConfig>, // Uses new merge config struct
 }
 
-/// Configuration for `RocksDbCfStore` (non-transactional, CF-aware store).
+/// Configuration for `RocksDbCFStore` (non-transactional, CF-aware store).
 #[derive(Clone)]
-pub struct RocksDbCfStoreConfig {
+pub struct RocksDbCFStoreConfig {
   pub path: String,
   pub create_if_missing: bool,
   pub db_tuning_profile: Option<TuningProfile>,
@@ -178,9 +215,9 @@ pub struct RocksDbCfStoreConfig {
   pub enable_statistics: Option<bool>,
 }
 
-impl Debug for RocksDbCfStoreConfig {
+impl Debug for RocksDbCFStoreConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RocksDbCfStoreConfig")
+        f.debug_struct("RocksDbCFStoreConfig")
          .field("path", &self.path)
          .field("create_if_missing", &self.create_if_missing)
          .field("db_tuning_profile_is_some", &self.db_tuning_profile.is_some())
@@ -193,20 +230,21 @@ impl Debug for RocksDbCfStoreConfig {
          .finish()
     }
 }
-impl Default for RocksDbCfStoreConfig {
-    fn default() -> Self {
-        Self {
-            path: Default::default(),
-            create_if_missing: true,
-            db_tuning_profile: None,
-            column_family_configs: HashMap::new(),
-            column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string()],
-            custom_options_db_and_cf: None,
-            recovery_mode: None,
-            parallelism: None,
-            enable_statistics: None,
-        }
+
+impl Default for RocksDbCFStoreConfig {
+  fn default() -> Self {
+    Self {
+      path: Default::default(),
+      create_if_missing: true,
+      db_tuning_profile: None,
+      column_family_configs: HashMap::new(),
+      column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string()],
+      custom_options_db_and_cf: None,
+      recovery_mode: None,
+      parallelism: None,
+      enable_statistics: None,
     }
+  }
 }
 
 
@@ -252,7 +290,7 @@ impl Default for RocksDbStoreConfig {
   }
 }
 
-impl From<RocksDbStoreConfig> for RocksDbCfStoreConfig {
+impl From<RocksDbStoreConfig> for RocksDbCFStoreConfig {
   fn from(cfg: RocksDbStoreConfig) -> Self {
     let mut cf_configs = HashMap::new();
     let default_cf_config = BaseCfConfig {
@@ -277,7 +315,7 @@ impl From<RocksDbStoreConfig> for RocksDbCfStoreConfig {
             Arc::new(new_closure) as Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut HashMap<String, Tunable<RocksDbOptions>>) + Send + Sync + 'static>
         });
     
-    RocksDbCfStoreConfig {
+    RocksDbCFStoreConfig {
       path: cfg.path,
       create_if_missing: cfg.create_if_missing,
       db_tuning_profile: None, 

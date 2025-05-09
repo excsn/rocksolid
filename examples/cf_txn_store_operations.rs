@@ -1,3 +1,4 @@
+use rocksdb::Direction;
 // examples/cf_txn_store_operations.rs
 use rocksolid::config::BaseCfConfig;
 use rocksolid::tx::{
@@ -24,7 +25,7 @@ fn main() -> StoreResult<()> {
   let db_path = temp_dir.path().join("cf_txn_ops_db");
   println!("Database path: {}", db_path.display());
 
-  // 1. Configure RocksDbCfTxnStore
+  // 1. Configure RocksDbCFTxnStore
   let mut cf_configs = HashMap::new();
   cf_configs.insert(
     CF_MAIN.to_string(),
@@ -58,12 +59,12 @@ fn main() -> StoreResult<()> {
 
   // 2. Open the transactional store
   let store = RocksDbCFTxnStore::open(config)?;
-  println!("RocksDbCfTxnStore opened successfully.");
+  println!("RocksDbCFTxnStore opened successfully.");
 
   // 3. Perform a multi-CF transaction using execute_transaction
   let item_id = "item-001".to_string();
   let initial_payload = "Initial version".to_string();
-  let log_entry_key = format!("log:{}", chrono::Utc::now().timestamp_nanos());
+  let log_entry_key = format!("log:{}", chrono::Utc::now().timestamp_nanos_opt().unwrap());
 
   println!("\nAttempting successful multi-CF transaction...");
   let result: StoreResult<String> = store.execute_transaction(None, |txn| {
@@ -108,7 +109,7 @@ fn main() -> StoreResult<()> {
     store.get::<_, TransactionalItem>(CF_MAIN, &item_id)?
   );
   // We can't easily verify the log entry without knowing its exact key, but we can list CF_LOGS
-  let logs: Vec<(String, String)> = store.find_by_prefix(CF_LOGS, &"log:".to_string())?;
+  let logs: Vec<(String, String)> = store.find_by_prefix(CF_LOGS, &"log:".to_string(), Direction::Forward)?;
   assert_eq!(logs.len(), 1);
   println!("Found log entry: {:?}", logs.first());
 

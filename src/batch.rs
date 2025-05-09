@@ -1,6 +1,6 @@
 // rocksolid/src/batch.rs
 
-use crate::cf_store::RocksDbCfStore;
+use crate::cf_store::RocksDbCFStore;
 use crate::error::{StoreError, StoreResult};
 use crate::serialization;
 use crate::types::ValueWithExpiry;
@@ -14,7 +14,7 @@ use std::mem::ManuallyDrop; // Import ManuallyDrop
 
 /// Builds and executes a sequence of write operations atomically on a **single, specified Column Family**.
 ///
-/// Create an instance using `RocksDbCfStore::batch_writer("cf_name")` or `RocksDbStore::batch_writer()`
+/// Create an instance using `RocksDbCFStore::batch_writer("cf_name")` or `RocksDbStore::batch_writer()`
 /// (which defaults to the default Column Family).
 ///
 /// Add operations using methods like `set`, `delete`, `merge`. These operations will
@@ -24,14 +24,14 @@ use std::mem::ManuallyDrop; // Import ManuallyDrop
 /// If the `BatchWriter` is dropped before `.commit()` or `.discard()` is called,
 /// a warning will be logged, and the operations will NOT be applied (unless `commit_on_drop` is a feature, which it's not here).
 pub struct BatchWriter<'a> {
-  store: &'a RocksDbCfStore,
+  store: &'a RocksDbCFStore,
   batch: ManuallyDrop<WriteBatch>, // Use ManuallyDrop
   cf_name: String,
   committed_or_discarded: bool,
 }
 
 impl<'a> BatchWriter<'a> {
-  pub(crate) fn new(store: &'a RocksDbCfStore, cf_name: String) -> Self {
+  pub(crate) fn new(store: &'a RocksDbCFStore, cf_name: String) -> Self {
     BatchWriter {
       store,
       batch: ManuallyDrop::new(WriteBatch::default()), // Wrap in ManuallyDrop

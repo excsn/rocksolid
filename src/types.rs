@@ -8,7 +8,7 @@ use crate::{deserialize_value, serialize_value, StoreError};
 
 // --- ValueWithExpiry ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ValueWithExpiry<Val>
 {
   pub expire_time: u64,

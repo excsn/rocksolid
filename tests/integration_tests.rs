@@ -1,12 +1,12 @@
-// rocksolid/tests/integration_tests.rs
 mod common;
 
 use common::setup_logging;
+use rocksolid::store::DefaultCFOperations;
 
 use std::fs;
 
 use rocksolid::config::RocksDbStoreConfig; // Use new config for default-CF store
-use rocksolid::{RocksDbStore, StoreError, StoreResult}; // RocksDbStore is the default-CF wrapper
+use rocksolid::{RocksDbStore, StoreResult}; // RocksDbStore is the default-CF wrapper
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -71,7 +71,7 @@ fn test_put_get() -> StoreResult<()> {
     data: "hello".to_string(),
   };
 
-  store.set(&key, &value)?; // Operates on default CF
+  store.put(&key, &value)?; // Operates on default CF
 
   let retrieved = store.get::<_, TestData>(&key)?;
   assert_eq!(retrieved, Some(value));
@@ -100,7 +100,7 @@ fn test_get_raw() -> StoreResult<()> {
   let key = "raw_key";
   let raw_value = vec![1, 2, 3, 4, 5];
 
-  store.set_raw(&key, &raw_value)?; // Operates on default CF
+  store.put_raw(&key, &raw_value)?; // Operates on default CF
 
   let retrieved_raw = store.get_raw(&key)?;
   assert_eq!(retrieved_raw, Some(raw_value));
@@ -133,7 +133,7 @@ fn test_expiry() -> StoreResult<()> {
   };
   let expire_ts = 1234567890; // Example timestamp
 
-  store.set_with_expiry(&key, &value, expire_ts)?; // Operates on default CF
+  store.put_with_expiry(&key, &value, expire_ts)?; // Operates on default CF
 
   let retrieved_with_expiry = store.get_with_expiry::<_, TestData>(&key)?;
   assert!(retrieved_with_expiry.is_some());
@@ -172,8 +172,8 @@ fn test_multiget() -> StoreResult<()> {
   };
   let key3 = "mget_3".to_string(); // This one won't be inserted
 
-  store.set(&key1, &val1)?;
-  store.set(&key2, &val2)?;
+  store.put(&key1, &val1)?;
+  store.put(&key2, &val2)?;
 
   let keys_to_get = vec![key1.clone(), key3.clone(), key2.clone()];
   let results = store.multiget::<String, TestData>(&keys_to_get)?; // Operates on default CF

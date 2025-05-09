@@ -22,7 +22,7 @@ use std::ptr;
 /// targeting operations primarily to the **default Column Family**.
 ///
 /// Create an instance using `RocksDbTxnStore::transaction_context()` (which internally
-/// uses `RocksDbCfTxnStore`).
+/// uses `RocksDbCFTxnStore`).
 /// Use its methods (`set`, `get`, `delete`, etc.) to stage operations within the transaction
 /// on the default CF.
 ///
@@ -88,7 +88,7 @@ impl<'store> TransactionContext<'store> {
     Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need a put_raw_in_txn_cf method
+    // RocksDbCFTxnStore would need a put_raw_in_txn_cf method
     // For now, assuming it exists or put_in_txn_cf handles raw via a generic type.
     // Let's assume put_in_txn_cf serializes, so we'd need a specific raw method on store.
     // To implement directly here for now:
@@ -104,7 +104,7 @@ impl<'store> TransactionContext<'store> {
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need a put_with_expiry_in_txn_cf method
+    // RocksDbCFTxnStore would need a put_with_expiry_in_txn_cf method
     // For now, direct implementation:
     let ser_key = serialization::serialize_key(key.as_ref())?;
     let vwe = ValueWithExpiry::from_value(expire_time, val)?;
@@ -122,7 +122,7 @@ impl<'store> TransactionContext<'store> {
     PatchVal: Serialize + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need merge_in_txn_cf
+    // RocksDbCFTxnStore would need merge_in_txn_cf
     // For now, direct:
     let ser_key = serialization::serialize_key(key.as_ref())?;
     let ser_merge_op = serialization::serialize_value(merge_value)?;
@@ -147,7 +147,7 @@ impl<'store> TransactionContext<'store> {
     Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need delete_in_txn_cf
+    // RocksDbCFTxnStore would need delete_in_txn_cf
     // For now, direct:
     let ser_key = serialization::serialize_key(key.as_ref())?;
     self.txn.delete(ser_key).map_err(StoreError::RocksDb)?;
@@ -174,7 +174,7 @@ impl<'store> TransactionContext<'store> {
     Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need get_raw_in_txn_cf
+    // RocksDbCFTxnStore would need get_raw_in_txn_cf
     // For now, direct:
     let ser_key = serialization::serialize_key(key.as_ref())?;
     match self.txn.get_pinned(ser_key)? {
@@ -190,7 +190,7 @@ impl<'store> TransactionContext<'store> {
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need get_with_expiry_in_txn_cf
+    // RocksDbCFTxnStore would need get_with_expiry_in_txn_cf
     // For now, get raw and deserialize:
     let opt_raw = self.get_raw(key)?; // Uses default CF
     opt_raw.map_or(Ok(None), |bytes| ValueWithExpiry::from_slice(&bytes).map(Some))
@@ -202,7 +202,7 @@ impl<'store> TransactionContext<'store> {
     Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
-    // RocksDbCfTxnStore would need exists_in_txn_cf
+    // RocksDbCFTxnStore would need exists_in_txn_cf
     // For now, direct:
     let ser_key = serialization::serialize_key(key.as_ref())?;
     match self.txn.get_pinned(ser_key)? {
@@ -257,7 +257,7 @@ impl<'store> Drop for TransactionContext<'store> {
     if !self.completed {
       log::warn!(
         "TransactionContext for DB at '{}' dropped without explicit commit/rollback. Rolling back.",
-        self.store.path() // Assumes RocksDbCfTxnStore has a path() method
+        self.store.path() // Assumes RocksDbCFTxnStore has a path() method
       );
       let txn_md = unsafe { ptr::read(&self.txn) };
       let txn: Transaction<'_, _> = ManuallyDrop::into_inner(txn_md);

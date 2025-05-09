@@ -1,6 +1,5 @@
-// examples/macros_cf_usage.rs
-use rocksolid::cf_store::{CFOperations, RocksDbCfStore};
-use rocksolid::config::{BaseCfConfig, RocksDbCfStoreConfig};
+use rocksolid::cf_store::RocksDbCFStore;
+use rocksolid::config::{BaseCfConfig, RocksDbCFStoreConfig};
 use rocksolid::{generate_dao_get_cf, generate_dao_set_cf, generate_dao_remove_cf, generate_dao_exists_cf};
 use rocksolid::StoreResult;
 use serde::{Deserialize, Serialize};
@@ -18,11 +17,11 @@ const APP_CONFIG_CF: &str = "app_config_cf";
 
 // Define a struct that will use the DAO macros
 struct ConfigDao<'a> {
-    store: &'a RocksDbCfStore,
+    store: &'a RocksDbCFStore,
 }
 
 impl<'a> ConfigDao<'a> {
-    fn new(store: &'a RocksDbCfStore) -> Self {
+    fn new(store: &'a RocksDbCFStore) -> Self {
         ConfigDao { store }
     }
 
@@ -58,7 +57,7 @@ fn main() -> StoreResult<()> {
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), BaseCfConfig::default());
 
 
-    let config = RocksDbCfStoreConfig {
+    let config = RocksDbCFStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
         column_families_to_open: vec![
@@ -69,8 +68,8 @@ fn main() -> StoreResult<()> {
         ..Default::default()
     };
 
-    let store = RocksDbCfStore::open(config)?;
-    println!("RocksDbCfStore opened for macro example.");
+    let store = RocksDbCFStore::open(config)?;
+    println!("RocksDbCFStore opened for macro example.");
 
     let dao = ConfigDao::new(&store);
 

@@ -1,7 +1,6 @@
-// examples/tuning_showcase.rs
-use rocksdb::Options as RocksDbOptions; // For custom_options signature
-use rocksolid::config::{BaseCfConfig, RecoveryMode, RocksDbCfStoreConfig};
-use rocksolid::tuner::{Tunable, TuningProfile}; // Tunable for custom_options
+use rocksdb::Options as RocksDbOptions;
+use rocksolid::config::{BaseCfConfig, RecoveryMode, RocksDbCFStoreConfig};
+use rocksolid::tuner::{Tunable, TuningProfile};
 use rocksolid::StoreResult;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,8 +76,8 @@ fn main() -> StoreResult<()> {
     },
   );
 
-  // 3. Configure RocksDbCfStore
-  let config = RocksDbCfStoreConfig {
+  // 3. Configure RocksDbCFStore
+  let config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![
@@ -107,7 +106,7 @@ fn main() -> StoreResult<()> {
   // The act of opening applies the profiles and custom options.
   // Verification of applied options often requires inspecting RocksDB logs or using DB properties,
   // which is beyond simple example assertions.
-  match rocksolid::RocksDbCfStore::open(config) {
+  match rocksolid::RocksDbCFStore::open(config) {
     Ok(_store) => {
       println!("Store opened successfully with specified tuning profiles and custom options.");
       // You can now use the store.

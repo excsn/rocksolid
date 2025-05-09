@@ -3,30 +3,29 @@
 mod common;
 
 use common::setup_logging;
-use rocksolid::cf_store::{CFOperations, RocksDbCfStore};
-// Use BaseCfConfig from the main config module
-use rocksolid::config::{BaseCfConfig, RockSolidMergeOperatorCfConfig, RocksDbCfStoreConfig, RocksDbStoreConfig};
-use rocksolid::error::{StoreError, StoreResult}; // Removed UnknownCf as it's part of StoreError
-use rocksolid::store::RocksDbStore;
+use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
+use rocksolid::config::{BaseCfConfig, RockSolidMergeOperatorCfConfig, RocksDbCFStoreConfig, RocksDbStoreConfig};
+use rocksolid::error::StoreError;
+use rocksolid::store::{DefaultCFOperations, RocksDbStore};
 use rocksolid::tuner::{Tunable, TuningProfile};
-use rocksolid::types::{MergeValue, MergeValueOperator, ValueWithExpiry};
-use rocksolid::{deserialize_value, serialize_value, MergeFn}; // For custom merge operator
+use rocksolid::types::{MergeValue, MergeValueOperator};
+use rocksolid::{deserialize_value, serialize_value};
 
-use rocksdb::{Options as RocksDbOptions, WriteBatch}; // For custom_options
+use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex}; // Keep Mutex if used by custom_options test
+use std::sync::{Arc, Mutex};
 
-const DEFAULT_CF_NAME: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME; // Use a consistent constant
+const DEFAULT_CF_NAME: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 
 // --- Specialized Helper for tests needing a single, shared PathBuf for setup and config ---
 // This helper encapsulates the TempDir to keep it alive.
 struct DeterministicTestPath {
-  temp_dir_guard: TempDir, // Keep the guard alive
+  _temp_dir_guard: TempDir, // Keep the guard alive
   db_path: PathBuf,
 }
 
@@ -45,7 +44,7 @@ impl DeterministicTestPath {
     fs::create_dir_all(&db_path).expect("Deterministic: Failed to create final test DB dir");
 
     DeterministicTestPath {
-      temp_dir_guard,
+      _temp_dir_guard: temp_dir_guard,
       db_path,
     }
   }
@@ -143,7 +142,7 @@ fn append_merge_operator(
 }
 
 // --- Test-specific Default Configuration Helper Functions ---
-fn default_cf_store_config_for_test(db_name: &str) -> RocksDbCfStoreConfig {
+fn default_cf_store_config_for_test(db_name: &str) -> RocksDbCFStoreConfig {
   let db_path_str = get_test_db_path(db_name).to_str().unwrap().to_string();
   let mut default_cf_configs_map = HashMap::new();
   default_cf_configs_map.insert(
@@ -151,7 +150,7 @@ fn default_cf_store_config_for_test(db_name: &str) -> RocksDbCfStoreConfig {
       BaseCfConfig::default(), // Assuming BaseCfConfig has a sensible Default
   );
 
-  RocksDbCfStoreConfig {
+  RocksDbCFStoreConfig {
       path: db_path_str,
       create_if_missing: true,
       db_tuning_profile: None,
@@ -178,7 +177,7 @@ fn default_store_config_for_test(db_name: &str) -> RocksDbStoreConfig {
   }
 }
 
-// --- RocksDbCfStore Tests ---
+// --- RocksDbCFStore Tests ---
 
 #[test]
 fn test_cf_store_open_close_default_only() {
@@ -187,10 +186,10 @@ fn test_cf_store_open_close_default_only() {
   let db_path = setup_test_db(test_name);
   let config = default_cf_store_config_for_test(test_name);
 
-  let store = RocksDbCfStore::open(config.clone()).expect("Failed to open CF store with default CF");
+  let store = RocksDbCFStore::open(config.clone()).expect("Failed to open CF store with default CF");
   drop(store);
 
-  RocksDbCfStore::destroy(&db_path, config).expect("Failed to destroy CF store");
+  RocksDbCFStore::destroy(&db_path, config).expect("Failed to destroy CF store");
   cleanup_test_db(&db_path);
 }
 
@@ -210,11 +209,11 @@ fn test_cf_store_open_with_named_cfs() {
   config.column_families_to_open = cf_names_to_open.clone();
   config.column_family_configs = cf_configs_map;
 
-  let store = RocksDbCfStore::open(config.clone()).expect("Failed to open with named CFs");
+  let store = RocksDbCFStore::open(config.clone()).expect("Failed to open with named CFs");
   assert!(store.get_cf_handle("cf_users").is_ok());
   assert!(store.get_cf_handle("cf_orders").is_ok());
   drop(store);
-  RocksDbCfStore::destroy(&db_path, config).expect("Failed to destroy CF store");
+  RocksDbCFStore::destroy(&db_path, config).expect("Failed to destroy CF store");
   cleanup_test_db(&db_path);
 }
 
@@ -225,7 +224,7 @@ fn test_cf_store_crud_on_default_cf() {
   let db_path = setup_test_db(test_name);
   let config = default_cf_store_config_for_test(test_name);
 
-  let store = RocksDbCfStore::open(config.clone()).unwrap();
+  let store = RocksDbCFStore::open(config.clone()).unwrap();
   let test_val = TestData {
     id: 1,
     data: "default_data".to_string(),
@@ -265,7 +264,7 @@ fn test_cf_store_crud_on_named_cf() {
   cf_configs_map.insert(cf_name.to_string(), BaseCfConfig::default());
   config.column_family_configs = cf_configs_map;
 
-  let store = RocksDbCfStore::open(config.clone()).unwrap();
+  let store = RocksDbCFStore::open(config.clone()).unwrap();
   let test_val = TestData {
     id: 2,
     data: "named_cf_data".to_string(),
@@ -289,7 +288,7 @@ fn test_cf_store_op_on_unknown_cf() {
   let test_name = "cf_op_unknown";
   let db_path = setup_test_db(test_name);
   let config = default_cf_store_config_for_test(test_name);
-  let store = RocksDbCfStore::open(config.clone()).unwrap();
+  let store = RocksDbCFStore::open(config.clone()).unwrap();
 
   match store.get::<_, TestData>("non_existent_cf", "key1") {
     Err(StoreError::UnknownCf(name)) => assert_eq!(name, "non_existent_cf"),
@@ -320,7 +319,7 @@ fn test_cf_store_cf_specific_profile() {
       merge_operator: None,
   });
 
-  let store = RocksDbCfStore::open(config.clone()).expect("Open with CF profile failed");
+  let store = RocksDbCFStore::open(config.clone()).expect("Open with CF profile failed");
   
   drop(store);
   cleanup_test_db(&db_path);
@@ -345,7 +344,7 @@ fn test_cf_store_merge_operator() {
       tuning_profile: None,
       merge_operator: Some(merge_op_config),
   });
-  let store = RocksDbCfStore::open(config.clone()).unwrap();
+  let store = RocksDbCFStore::open(config.clone()).unwrap();
 
   store.put(cf_name, "merge_key", &"Hello".to_string()).unwrap();
   let merge_op = MergeValue(MergeValueOperator::Append, "World".to_string()); // String for PatchVal
@@ -373,7 +372,7 @@ fn test_cf_store_custom_options() {
   let db_flag_clone = db_option_set_flag.clone();
   let cf_flag_clone = cf_option_set_flag.clone();
 
-  // Signature of custom_options_db_and_cf matches the one in RocksDbCfStoreConfig
+  // Signature of custom_options_db_and_cf matches the one in RocksDbCFStoreConfig
   let custom_opts_fn = Arc::new(
     move |db_opts_tunable: &mut Tunable<RocksDbOptions>,
           cf_opts_map_tunable: &mut HashMap<String, Tunable<RocksDbOptions>>| {
@@ -392,7 +391,7 @@ fn test_cf_store_custom_options() {
   config.column_family_configs.entry(cf_name.to_string()).or_default(); // Ensure CF exists in map
   config.custom_options_db_and_cf = Some(custom_opts_fn);
 
-  let store = RocksDbCfStore::open(config.clone()).expect("Open with custom options failed");
+  let store = RocksDbCFStore::open(config.clone()).expect("Open with custom options failed");
   assert!(*db_option_set_flag.lock().unwrap(), "DB custom option was not applied");
   assert!(*cf_option_set_flag.lock().unwrap(), "CF custom option was not applied");
   
@@ -415,7 +414,7 @@ fn test_cf_store_batch_writer() {
   config.column_family_configs.entry(cf1.to_string()).or_default();
   
 
-  let store = RocksDbCfStore::open(config.clone()).unwrap();
+  let store = RocksDbCFStore::open(config.clone()).unwrap();
 
   let val1 = TestData { id: 10, data: "default_batch".into() };
   let val2 = TestData { id: 11, data: "cf1_batch".into() };
@@ -454,7 +453,7 @@ fn test_default_store_open_and_crud() {
   // Create config using this specific path
   // We directly construct the config here instead of using your default_store_config_for_test,
   // because that helper calls your original get_test_db_path.
-  let mut config = RocksDbStoreConfig {
+  let config = RocksDbStoreConfig {
       path: db_path.to_str().unwrap().to_string(),
       create_if_missing: true,
       default_cf_tuning_profile: Some(TuningProfile::LatestValue {
@@ -476,12 +475,12 @@ fn test_default_store_open_and_crud() {
   assert_eq!(store.path(), db_path.to_str().unwrap());
 
   let test_val = TestData { id: 100, data: "simple_store_data".to_string() };
-  store.set("key1", &test_val).unwrap();
+  store.put("key1", &test_val).unwrap();
   let retrieved: Option<TestData> = store.get("key1").unwrap();
   assert_eq!(retrieved, Some(test_val.clone()));
   assert!(store.exists("key1").unwrap());
 
-  store.remove("key1").unwrap();
+  store.delete("key1").unwrap();
   assert!(!store.exists("key1").unwrap());
 
   let store_path_for_destroy = store.path().to_string();
@@ -504,13 +503,13 @@ fn test_default_store_access_underlying_cf_store() {
     data: "accessed_via_cf_store_ref".to_string(),
   };
 
-  let cf_store_ref = store.cf_store(); // Arc<RocksDbCfStore>
+  let cf_store_ref = store.cf_store(); // Arc<RocksDbCFStore>
 
   cf_store_ref.put(DEFAULT_CF_NAME, "key_direct", &test_val).unwrap();
   let retrieved: Option<TestData> = cf_store_ref.get(DEFAULT_CF_NAME, "key_direct").unwrap();
   assert_eq!(retrieved, Some(test_val.clone()));
 
-  // Get BatchWriter for default CF via RocksDbStore (which internally calls RocksDbCfStore::batch_writer)
+  // Get BatchWriter for default CF via RocksDbStore (which internally calls RocksDbCFStore::batch_writer)
   // store.batch_writer() should return BatchWriter directly if the StoreResult was removed from its signature.
   // If store.batch_writer() still returns StoreResult, then add .unwrap().
   let mut batch = store.batch_writer(); // New API: batch_writer on RocksDbStore now implicitly default CF

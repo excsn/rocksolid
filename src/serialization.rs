@@ -53,7 +53,7 @@ where
 // --- Combined Deserialization ---
 
 #[inline]
-pub(crate) fn deserialize_kv<Key, Val>(
+pub fn deserialize_kv<Key, Val>(
   key_bytes: &[u8],
   val_bytes: &[u8],
 ) -> StoreResult<(Key, Val)>
@@ -67,7 +67,7 @@ where
 }
 
 #[inline]
-pub(crate) fn deserialize_kv_expiry<Key, Val>(
+pub fn deserialize_kv_expiry<Key, Val>(
   key_bytes: &[u8],
   val_bytes_with_ts: &[u8],
 ) -> StoreResult<(Key, crate::types::ValueWithExpiry<Val>)>

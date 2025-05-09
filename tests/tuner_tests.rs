@@ -3,8 +3,8 @@ mod common;
 
 use common::setup_logging;
 
-use rocksdb::{DBCompressionType, Options as RocksDbOptions}; // Import specific types for assertions
-use rocksolid::tuner::{PatternTuner, Tunable, TuningProfile};
+use rocksdb::Options as RocksDbOptions; // Import specific types for assertions
+use rocksolid::tuner::Tunable;
 
 // Helper to check lock status (might need to be pub(crate) in tunable.rs or exposed via a method)
 trait TunableTestAccess<T> {

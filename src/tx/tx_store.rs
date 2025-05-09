@@ -7,14 +7,16 @@ use super::context::TransactionContext;
 use super::WriteBatchTransaction;
 use crate::config::{BaseCfConfig, MergeOperatorConfig, RecoveryMode, RockSolidMergeOperatorCfConfig};
 use crate::error::{StoreError, StoreResult};
-use crate::serialization;
+use crate::iter::IterConfig;
+use crate::store::DefaultCFOperations;
 use crate::tuner::{Tunable, TuningProfile};
-use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry}; // For direct store methods like set/get on committed state
+use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
+use crate::{serialization, CFOperations}; // For direct store methods like set/get on committed state
 
 use bytevec::ByteDecodable;
 use rocksdb::{
   Direction, IteratorMode, Options as RocksDbOptions, ReadOptions, Transaction, TransactionDB, TransactionDBOptions,
-  WriteOptions as RocksDbWriteOptions,
+  WriteOptions as RocksDbWriteOptions, DEFAULT_COLUMN_FAMILY_NAME,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::hash::Hash;
@@ -104,7 +106,7 @@ impl From<RocksDbTxnStoreConfig> for RocksDbCFTxnStoreConfig {
 
 #[derive(Debug)]
 pub struct RocksDbTxnStore {
-  cf_txn_store: Arc<RocksDbCFTxnStore>,
+  cf_store: Arc<RocksDbCFTxnStore>,
 }
 
 impl RocksDbTxnStore {
@@ -116,7 +118,7 @@ impl RocksDbTxnStore {
     let cf_txn_config: RocksDbCFTxnStoreConfig = config.into();
     let store_impl = RocksDbCFTxnStore::open(cf_txn_config)?;
     Ok(Self {
-      cf_txn_store: Arc::new(store_impl),
+      cf_store: Arc::new(store_impl),
     })
   }
 
@@ -126,31 +128,33 @@ impl RocksDbTxnStore {
   }
 
   pub fn path(&self) -> &str {
-    self.cf_txn_store.path()
+    self.cf_store.path()
   }
 
   pub fn cf_txn_store(&self) -> Arc<RocksDbCFTxnStore> {
-    self.cf_txn_store.clone()
+    self.cf_store.clone()
   }
 
   pub fn begin_transaction(&self, write_options: Option<RocksDbWriteOptions>) -> Transaction<'_, TransactionDB> {
-    self.cf_txn_store.begin_transaction(write_options)
+    self.cf_store.begin_transaction(write_options)
   }
 
   pub fn execute_transaction<F, R>(&self, write_options: Option<RocksDbWriteOptions>, operation: F) -> StoreResult<R>
   where
     F: FnOnce(&Transaction<'_, TransactionDB>) -> StoreResult<R>,
   {
-    self.cf_txn_store.execute_transaction(write_options, operation)
+    self.cf_store.execute_transaction(write_options, operation)
   }
 
   pub fn transaction_context(&self) -> TransactionContext<'_> {
-    TransactionContext::new(&self.cf_txn_store, None)
+    TransactionContext::new(&self.cf_store, None)
   }
+}
 
+impl DefaultCFOperations for RocksDbTxnStore {
   // --- Read operations on COMMITTED data (default CF) ---
 
-  pub fn get<K, V>(&self, key: K) -> StoreResult<Option<V>>
+  fn get<K, V>(&self, key: K) -> StoreResult<Option<V>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     V: DeserializeOwned + Debug,
@@ -158,26 +162,26 @@ impl RocksDbTxnStore {
     // Ideal: self.cf_txn_store.get_cf(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
     // Direct for now:
     let ser_key = serialization::serialize_key(key.as_ref())?;
-    match self.cf_txn_store.db_txn_raw().get_pinned(&ser_key)? {
+    match self.cf_store.db_txn_raw().get_pinned(&ser_key)? {
       Some(v) => serialization::deserialize_value(&v).map(Some),
       None => Ok(None),
     }
   }
 
-  pub fn get_raw<K>(&self, key: K) -> StoreResult<Option<Vec<u8>>>
+  fn get_raw<K>(&self, key: K) -> StoreResult<Option<Vec<u8>>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     let ser_key = serialization::serialize_key(key.as_ref())?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .get_pinned(&ser_key)
       .map(|opt_pinned| opt_pinned.map(|p| p.to_vec()))
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn get_with_expiry<K, V>(&self, key: K) -> StoreResult<Option<ValueWithExpiry<V>>>
+  fn get_with_expiry<K, V>(&self, key: K) -> StoreResult<Option<ValueWithExpiry<V>>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
@@ -187,20 +191,20 @@ impl RocksDbTxnStore {
       .map_or(Ok(None), |bytes| ValueWithExpiry::from_slice(&bytes).map(Some))
   }
 
-  pub fn exists<K>(&self, key: K) -> StoreResult<bool>
+  fn exists<K>(&self, key: K) -> StoreResult<bool>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     let ser_key = serialization::serialize_key(key.as_ref())?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .get_pinned(ser_key)
       .map(|opt_pinned| opt_pinned.is_some())
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn multiget<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<V>>>
+  fn multiget<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<V>>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
     V: DeserializeOwned + Debug,
@@ -215,7 +219,7 @@ impl RocksDbTxnStore {
 
     // Arc<TransactionDB> implements ReadOps, so multi_get is available.
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .multi_get(ser_keys)
       .into_iter()
@@ -229,7 +233,7 @@ impl RocksDbTxnStore {
       .collect()
   }
 
-  pub fn multiget_raw<K>(&self, keys: &[K]) -> StoreResult<Vec<Option<Vec<u8>>>>
+  fn multiget_raw<K>(&self, keys: &[K]) -> StoreResult<Vec<Option<Vec<u8>>>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
@@ -241,7 +245,7 @@ impl RocksDbTxnStore {
       .map(|k| serialization::serialize_key(k.as_ref()))
       .collect::<StoreResult<_>>()?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .multi_get(ser_keys)
       .into_iter()
@@ -250,7 +254,7 @@ impl RocksDbTxnStore {
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn multiget_with_expiry<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<ValueWithExpiry<V>>>>
+  fn multiget_with_expiry<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<ValueWithExpiry<V>>>>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
     V: Serialize + DeserializeOwned + Debug,
@@ -263,7 +267,7 @@ impl RocksDbTxnStore {
   }
 
   // --- Write operations directly on store (COMMITTED state, default CF) ---
-  pub fn set<K, V>(&self, key: K, value: &V) -> StoreResult<()>
+  fn put<K, V>(&self, key: K, value: &V) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     V: Serialize + Debug,
@@ -272,34 +276,34 @@ impl RocksDbTxnStore {
     let ser_val = serialization::serialize_value(value)?;
     // Arc<TransactionDB> implements WriteOps
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .put(ser_key, ser_val)
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn set_raw<K>(&self, key: K, raw_val: &[u8]) -> StoreResult<()>
+  fn put_raw<K>(&self, key: K, raw_val: &[u8]) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     let ser_key = serialization::serialize_key(key.as_ref())?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .put(ser_key, raw_val)
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn set_with_expiry<K, V>(&self, key: K, val: &V, expire_time: u64) -> StoreResult<()>
+  fn put_with_expiry<K, V>(&self, key: K, val: &V, expire_time: u64) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     let vwe = ValueWithExpiry::from_value(expire_time, val)?;
-    self.set_raw(key, &vwe.serialize_for_storage())
+    self.put_raw(key, &vwe.serialize_for_storage())
   }
 
-  pub fn merge<K, PatchVal>(&self, key: K, merge_value: &MergeValue<PatchVal>) -> StoreResult<()>
+  fn merge<K, PatchVal>(&self, key: K, merge_value: &MergeValue<PatchVal>) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
@@ -307,96 +311,146 @@ impl RocksDbTxnStore {
     let ser_key = serialization::serialize_key(key.as_ref())?;
     let ser_merge_op = serialization::serialize_value(merge_value)?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .merge(ser_key, ser_merge_op)
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn merge_raw<K>(&self, key: K, raw_merge_op: &[u8]) -> StoreResult<()>
+  fn merge_raw<K>(&self, key: K, raw_merge_op: &[u8]) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     let ser_key = serialization::serialize_key(key.as_ref())?;
     self
-      .cf_txn_store
+      .cf_store
       .db_txn_raw()
       .merge(ser_key, raw_merge_op)
       .map_err(StoreError::RocksDb)
   }
 
-  pub fn remove<K>(&self, key: K) -> StoreResult<()>
+  fn delete<K>(&self, key: K) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
   {
     let ser_key = serialization::serialize_key(key.as_ref())?;
+    self.cf_store.db_txn_raw().delete(ser_key).map_err(StoreError::RocksDb)
+  }
+
+  fn delete_range<K>(&self, start_key: K, end_key: K) -> StoreResult<()>
+  where
+    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+  {
     self
-      .cf_txn_store
-      .db_txn_raw()
-      .delete(ser_key)
-      .map_err(StoreError::RocksDb)
+      .cf_store
+      .delete_range(DEFAULT_COLUMN_FAMILY_NAME, start_key, end_key)
   }
 
   // --- Iterator / Find Operations on COMMITTED data (default CF) ---
-  pub fn find_by_prefix<Key, Val>(&self, prefix: &Key) -> StoreResult<Vec<(Key, Val)>>
+  // --- Iterator / Find Operations ---
+  fn find_by_prefix<Key, Val>(&self, prefix: &Key, direction: rocksdb::Direction) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
   {
-    let ser_prefix = serialization::serialize_key(prefix.as_ref())?;
-    let db_raw = self.cf_txn_store.db_txn_raw();
-    let iter = db_raw.prefix_iterator(&ser_prefix);
-    let mut results = Vec::new();
-    for result in iter {
-      match result {
-        Ok((key_bytes, val_bytes)) => match serialization::deserialize_kv(key_bytes.as_ref(), val_bytes.as_ref()) {
-          Ok((k, v)) => results.push((k, v)),
-          Err(e) => {
-            log::error!("Failed to deserialize KV during prefix scan (TxnStore): {}", e);
-            return Err(e);
-          }
-        },
-        Err(e) => return Err(StoreError::RocksDb(e)),
-      }
-    }
-    Ok(results)
+    self
+      .cf_store
+      .find_by_prefix(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, prefix, direction)
   }
 
-  pub fn find_from<Key, Val, F>(
+  fn find_from<Key, Val, F>(
     &self,
     start_key: Key,
-    direction: Direction,
-    mut control_fn: F,
+    direction: rocksdb::Direction,
+    control_fn: F,
   ) -> StoreResult<Vec<(Key, Val)>>
   where
     Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
-    F: FnMut(&Key, &Val, usize) -> IterationControlDecision,
+    F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
-    let ser_start_key = serialization::serialize_key(start_key.as_ref())?;
-    let mode = IteratorMode::From(&ser_start_key, direction);
-    let read_opts = ReadOptions::default(); // Can be customized if needed
+    self
+      .cf_store
+      .find_from(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
+  }
 
-    // Arc<TransactionDB> implements ReadOps, so iterator_opt is available.
-    let db_raw = self.cf_txn_store.db_txn_raw();
-    let iter = db_raw.iterator_opt(mode, read_opts);
-    let mut results = Vec::new();
-    for result in iter {
-      match result {
-        Ok((key_bytes, val_bytes)) => match serialization::deserialize_kv(key_bytes.as_ref(), val_bytes.as_ref()) {
-          Ok((k, v)) => match control_fn(&k, &v, results.len()) {
-            IterationControlDecision::Keep => results.push((k, v)),
-            IterationControlDecision::Skip => continue,
-            IterationControlDecision::Stop => break,
-          },
-          Err(e) => {
-            log::error!("Failed to deserialize KV during find_from scan (TxnStore): {}", e);
-            return Err(e);
-          }
-        },
-        Err(e) => return Err(StoreError::RocksDb(e)),
-      }
-    }
-    Ok(results)
+  fn iterate_cf<'a, Key, Val>(
+    &'a self,
+    cfg: IterConfig<Key, Val>,
+  ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
+    Val: DeserializeOwned + Debug + 'a,
+  {
+    self.cf_store.iterate_cf(cfg)
+  }
+
+  fn iterate_cf_control<Key>(
+    &self,
+    prefix: Option<Key>,
+    start: Option<Key>,
+    cfg: IterConfig<(), ()>,
+  ) -> Result<(), StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+  {
+    self.cf_store.iterate_cf_control(prefix, start, cfg)
+  }
+
+  fn iterate_by_prefix_control<Key, F>(
+    &self,
+    start_key: Key,
+    direction: Direction,
+    control_fn: F,
+  ) -> Result<(), StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
+  {
+    self
+      .cf_store
+      .iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
+  }
+
+  fn iterate_from_control<Key, F>(&self, start_key: Key, direction: Direction, control_fn: F) -> Result<(), StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
+  {
+    self
+      .cf_store
+      .iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
+  }
+
+  fn find_from_with_expire_val<Key, Val, ControlFn>(
+    &self,
+    start: &Key,
+    reverse: bool,
+    control_fn: ControlFn,
+  ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Val: DeserializeOwned + Debug,
+    ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
+  {
+    self
+      .cf_store
+      .find_from_with_expire_val(DEFAULT_COLUMN_FAMILY_NAME, start, reverse, control_fn)
+  }
+
+  fn find_by_prefix_with_expire_val<Key, Val, ControlFn>(
+    &self,
+    start: &Key,
+    reverse: bool,
+    control_fn: ControlFn,
+  ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Val: DeserializeOwned + Debug,
+    ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
+  {
+    self
+      .cf_store
+      .find_by_prefix_with_expire_val(DEFAULT_COLUMN_FAMILY_NAME, start, reverse, control_fn)
   }
 }

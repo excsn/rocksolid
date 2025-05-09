@@ -1,9 +1,5 @@
-// examples/transactional.rs
-
 use rocksolid::{
-  tx::{tx_store::RocksDbTxnStoreConfig, RocksDbTxnStore, TransactionContext}, // Updated imports
-  StoreError,
-  StoreResult,
+  store::DefaultCFOperations, tx::{tx_store::RocksDbTxnStoreConfig, RocksDbTxnStore, TransactionContext}, StoreError, StoreResult
 };
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
@@ -85,14 +81,14 @@ fn main() -> StoreResult<()> {
   let acc_a_key = "acc:A"; // Keys for default CF
   let acc_b_key = "acc:B";
 
-  txn_store.set(
+  txn_store.put(
     acc_a_key,
     &Account {
       id: "A".into(),
       balance: 100,
     },
   )?;
-  txn_store.set(
+  txn_store.put(
     acc_b_key,
     &Account {
       id: "B".into(),

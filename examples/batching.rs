@@ -1,8 +1,6 @@
-// examples/batching.rs
-
-use rocksolid::cf_store::{CFOperations, RocksDbCfStore};
-use rocksolid::config::{BaseCfConfig, RocksDbCfStoreConfig};
-use rocksolid::{BatchWriter, StoreResult}; // BatchWriter is re-exported
+use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
+use rocksolid::config::{BaseCfConfig, RocksDbCFStoreConfig};
+use rocksolid::StoreResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -22,13 +20,13 @@ fn main() -> StoreResult<()> {
   let db_path = temp_dir.path().join("batch_db_new_api");
   println!("Batching DB path: {}", db_path.display());
 
-  // Configure RocksDbCfStore
+  // Configure RocksDbCFStore
   let mut cf_configs = HashMap::new();
   cf_configs.insert(PRODUCTS_CF.to_string(), BaseCfConfig::default());
   cf_configs.insert(METADATA_CF.to_string(), BaseCfConfig::default());
   cf_configs.insert(DEFAULT_CF.to_string(), BaseCfConfig::default());
 
-  let config = RocksDbCfStoreConfig {
+  let config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![DEFAULT_CF.to_string(), PRODUCTS_CF.to_string(), METADATA_CF.to_string()],
@@ -36,7 +34,7 @@ fn main() -> StoreResult<()> {
     ..Default::default()
   };
 
-  let store = RocksDbCfStore::open(config)?;
+  let store = RocksDbCFStore::open(config)?;
 
   // --- Batching for PRODUCTS_CF ---
   println!("\nBuilding batch for CF: '{}'", PRODUCTS_CF);

@@ -137,7 +137,7 @@ macro_rules! generate_dao_remove_in_txn {
 }
 
 /// Generates a function body to get a single record by key from a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_get_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr) => {{
@@ -147,7 +147,7 @@ macro_rules! generate_dao_get_cf {
 }
 
 /// Generates a function body to set (put) a single record by key into a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_set_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr, $record:expr) => {{
@@ -157,7 +157,7 @@ macro_rules! generate_dao_set_cf {
 }
 
 /// Generates a function body to get multiple records by a list of keys/IDs from a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_multiget_cf {
   ($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr) => {{
@@ -174,7 +174,7 @@ macro_rules! generate_dao_multiget_cf {
 }
 
 /// Generates a function body to get multiple records by a list of keys/IDs from a specific CF, preserving order.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_multiget_preserve_order_cf {
   ($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr) => {{
@@ -191,7 +191,7 @@ macro_rules! generate_dao_multiget_preserve_order_cf {
 
 
 /// Generates a function body to get a single record with its expiry time by key from a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_get_with_expiry_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr) => {{
@@ -200,7 +200,7 @@ macro_rules! generate_dao_get_with_expiry_cf {
 }
 
 /// Generates a function body to set (put) a single record with an expiry time into a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_set_with_expiry_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr, $record:expr, $expire_time:expr) => {{
@@ -209,7 +209,7 @@ macro_rules! generate_dao_set_with_expiry_cf {
 }
 
 /// Generates a function body to get multiple records with expiry by a list of keys/IDs from a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_multiget_with_expiry_cf {
   ($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr) => {{
@@ -226,7 +226,7 @@ macro_rules! generate_dao_multiget_with_expiry_cf {
 }
 
 /// Generates a function body to merge a value using a `MergeValue` operand into a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_merge_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr, $merge_value:expr) => {{
@@ -235,7 +235,7 @@ macro_rules! generate_dao_merge_cf {
 }
 
 /// Generates a function body to remove a single record by key from a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_remove_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr) => {{
@@ -245,12 +245,12 @@ macro_rules! generate_dao_remove_cf {
 }
 
 /// Generates a function body to check if a key exists in a specific CF.
-/// Use with `RocksDbCfStore` or any type implementing `CfOperations`.
+/// Use with `RocksDbCFStore` or any type implementing `CfOperations`.
 #[macro_export]
 macro_rules! generate_dao_exists_cf {
   ($cf_store:expr, $cf_name:expr, $key:expr) => {{
     use rocksolid::cf_store::CFOperations;
-    // Assumes CfOperations trait (or RocksDbCfStore directly) has an `exists` method
+    // Assumes CfOperations trait (or RocksDbCFStore directly) has an `exists` method
     $cf_store.exists($cf_name, &$key)
   }};
 }

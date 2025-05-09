@@ -9,24 +9,24 @@
 ## Features ✨
 
 *   **Column Family (CF) Aware:**
-    *   **`RocksDbCfStore`**: The primary, public store for fine-grained non-transactional operations on any Column Family.
-    *   **`RocksDbStore`**: A convenience wrapper around `RocksDbCfStore` for simple, non-batch, non-transactional operations on the **default Column Family**.
-    *   **`RocksDbCfTxnStore`**: The primary, public store for CF-aware **transactional** operations using `rocksdb::TransactionDB`.
-    *   **`RocksDbTxnStore`**: A convenience wrapper around `RocksDbCfTxnStore` for transactional operations primarily focused on the **default Column Family**.
+    *   **`RocksDbCFStore`**: The primary, public store for fine-grained non-transactional operations on any Column Family.
+    *   **`RocksDbStore`**: A convenience wrapper around `RocksDbCFStore` for simple, non-batch, non-transactional operations on the **default Column Family**.
+    *   **`RocksDbCFTxnStore`**: The primary, public store for CF-aware **transactional** operations using `rocksdb::TransactionDB`.
+    *   **`RocksDbTxnStore`**: A convenience wrapper around `RocksDbCFTxnStore` for transactional operations primarily focused on the **default Column Family**.
 *   **Flexible Configuration:**
-    *   **`RocksDbCfStoreConfig` / `RocksDbCFTxnStoreConfig`**: Comprehensive configuration for CF-aware stores, allowing per-CF tuning profiles and merge operators.
+    *   **`RocksDbCFStoreConfig` / `RocksDbCFTxnStoreConfig`**: Comprehensive configuration for CF-aware stores, allowing per-CF tuning profiles and merge operators.
     *   **`RocksDbStoreConfig` / `RocksDbTxnStoreConfig`**: Simplified configuration for default-CF focused usage.
-    *   **`TuningProfile`**: Pre-defined RocksDB option sets for common workloads (DB-wide or per-CF) via the `tuner` module (e.g., `LatestValue`, `MemorySaver`, `RealTime`, `TimeSeries`, `SparseBitmap`).
-*   **Simplified API:** Clear methods for common operations (e.g., `get`, `put`, `merge`, `delete`, iterators) targeting specific CFs via the `CFOperations` trait implemented by `RocksDbCfStore` and `RocksDbCfTxnStore` (for committed reads).
+    *   **`TuningProfile`**: Pre-defined RocksDB option sets for common workloads (DB-wide or per-CF) via the `tuner` module (e.g., `LatestValue`, `MemorySaver`, `RealTime`, `TimeSeries`, `SparseBitmap`). Each profile can include I/O capping options.
+*   **Simplified API:** Clear methods for common operations (e.g., `get`, `put`, `merge`, `delete`, iterators) targeting specific CFs via the `CFOperations` trait implemented by `RocksDbCFStore` and `RocksDbCFTxnStore` (for committed reads).
 *   **Automatic Serialization:** Seamlessly serialize/deserialize keys (using `bytevec`) and values (using MessagePack via `rmp_serde`) with minimal boilerplate via `serde`.
 *   **Value Expiry Hints:** Built-in support for associating expiry timestamps (Unix epoch seconds) with values using `ValueWithExpiry<T>`. *(Note: Automatic data removal based on expiry (e.g., TTL compaction) requires further RocksDB configuration not directly managed by RockSolid's basic API; application logic or custom compaction filters are typically needed).*
 *   **Transactional Support (CF-Aware):**
-    *   **`RocksDbCfTxnStore`**: Provides fully CF-aware pessimistic transactional operations. Obtain `rocksdb::Transaction` via `begin_transaction()` and use methods like `put_in_txn_cf()`, `get_in_txn()`.
+    *   **`RocksDbCFTxnStore`**: Provides fully CF-aware pessimistic transactional operations. Obtain `rocksdb::Transaction` via `begin_transaction()` and use methods like `put_in_txn_cf()`, `get_in_txn()`.
     *   **`RocksDbTxnStore`**: Offers a `TransactionContext` for managing operations primarily on the default CF, and `execute_transaction()` for automatic commit/rollback on the default CF.
-*   **Atomic Batch Writes (CF-Aware):** Efficiently group multiple write operations into atomic batches targeting specific CFs using the fluent `BatchWriter` API (obtained from `RocksDbCfStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`). Multi-CF atomic batches are possible using `raw_batch_mut()`. Non-transactional.
+*   **Atomic Batch Writes (CF-Aware):** Efficiently group multiple write operations into atomic batches targeting specific CFs using the fluent `BatchWriter` API (obtained from `RocksDbCFStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`). Multi-CF atomic batches are possible using `raw_batch_mut()`. Non-transactional.
 *   **Configurable Merge Operators (Per-CF):** Supports standard merge operators and includes a flexible **Merge Router** (`MergeRouterBuilder`) to dispatch merge operations based on key patterns. Configurable per Column Family.
 *   **Error Handling:** Uses a clear `StoreError` enum (including `UnknownCf`) and `StoreResult<T>`.
-*   **Utilities (CF-Aware):** Includes utilities for database backup (checkpointing) and migration (`backup_db`, `migrate_db`) aware of Column Families for non-transactional stores (using `RocksDbCfStoreConfig`).
+*   **Utilities (CF-Aware):** Includes utilities for database backup (checkpointing) and migration (`backup_db`, `migrate_db`) aware of Column Families for non-transactional stores (using `RocksDbCFStoreConfig`).
 *   **Helper Macros:** Optional macros (`generate_dao_*` and `generate_dao_*_cf`) to reduce boilerplate for common data access patterns on default-CF or specific-CF stores.
 
 ## Installation ⚙️
@@ -35,7 +35,7 @@ Add `rocksolid` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rocksolid = "2.0" # Replace with the actual version
+rocksolid = "2.1.0" # Ensure this matches the latest version
 serde = { version = "1.0", features = ["derive"] }
 ```
 
@@ -46,7 +46,7 @@ RockSolid relies on the `rocksdb` crate. Ensure you have the necessary system de
 For simple use cases focusing on the default Column Family (non-batch, non-transactional operations):
 
 ```rust
-use rocksolid::{RocksDbStore, config::RocksDbStoreConfig, StoreResult};
+use rocksolid::{RocksDbStore, config::RocksDbStoreConfig, tuner::TuningProfile, StoreResult};
 use serde::{Serialize, Deserialize};
 use tempfile::tempdir;
 
@@ -65,8 +65,13 @@ fn main() -> StoreResult<()> {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
         // Optionally set tuning/merge for default CF
-        // default_cf_tuning_profile: Some(TuningProfile::LatestValue { ... }),
-        ..Default::default()
+        // default_cf_tuning_profile: Some(TuningProfile::LatestValue {
+        //     mem_budget_mb_per_cf_hint: 32,
+        //     use_bloom_filters: true,
+        //     enable_compression: true,
+        //     io_cap: None,
+        // }),
+        // ..other fields if needed, or rely on their defaults from the struct
     };
 
     // 2. Open the default-CF convenience store
@@ -76,7 +81,7 @@ fn main() -> StoreResult<()> {
     let user = User { id: 1, name: "Alice".to_string() };
     let user_key = format!("user:{}", user.id);
 
-    store.set(&user_key, &user)?;
+    store.put(&user_key, &user)?;
     let retrieved_user: Option<User> = store.get(&user_key)?;
     assert_eq!(retrieved_user.as_ref(), Some(&user));
     println!("Retrieved User (default CF): {:?}", retrieved_user);
@@ -97,8 +102,8 @@ fn main() -> StoreResult<()> {
 For applications requiring multiple Column Families or explicit CF control (non-transactional):
 
 ```rust
-use rocksolid::cf_store::{RocksDbCfStore, CFOperations};
-use rocksolid::config::{RocksDbCfStoreConfig, BaseCfConfig};
+use rocksolid::cf_store::{RocksDbCFStore, CFOperations};
+use rocksolid::config::{RocksDbCFStoreConfig, BaseCfConfig};
 use rocksolid::tuner::{TuningProfile, profiles::IoCapOpts};
 use rocksolid::StoreResult;
 use serde::{Serialize, Deserialize};
@@ -124,16 +129,16 @@ fn main() -> StoreResult<()> {
             mem_budget_mb_per_cf_hint: 32,
             use_bloom_filters: true,
             enable_compression: true,
-            io_cap: None,
+            io_cap: None, // Or Some(IoCapOpts {...})
         }),
         ..Default::default()
     });
     cf_configs.insert(INVENTORY_CF.to_string(), BaseCfConfig {
         tuning_profile: Some(TuningProfile::MemorySaver {
-            total_mem_mb: 0, // DB wide setting
-            db_block_cache_fraction: 0.0, // DB wide setting
-            db_write_buffer_manager_fraction: 0.0, // DB wide setting
-            expected_cf_count_for_write_buffers: 2, // If DB-level WBM
+            total_mem_mb: 128, // This DB-level setting on a CF profile is often a hint
+            db_block_cache_fraction: 0.4, // if the profile applies it DB-wide
+            db_write_buffer_manager_fraction: 0.2,
+            expected_cf_count_for_write_buffers: 2,
             enable_light_compression: true,
             io_cap: None,
         }),
@@ -141,7 +146,7 @@ fn main() -> StoreResult<()> {
     });
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), BaseCfConfig::default());
 
-    let config = RocksDbCfStoreConfig {
+    let config = RocksDbCFStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
         column_families_to_open: vec![
@@ -150,11 +155,11 @@ fn main() -> StoreResult<()> {
             INVENTORY_CF.to_string(),
         ],
         column_family_configs: cf_configs,
-        ..Default::default()
+        // ..other fields if needed, or rely on their defaults from the struct
     };
 
     // 2. Open the CF-aware store
-    let store = RocksDbCfStore::open(config)?;
+    let store = RocksDbCFStore::open(config)?;
 
     // 3. Operations on specific CFs
     let laptop = Product { sku: "LP100".to_string(), price: 1200.00 };
@@ -196,6 +201,7 @@ RockSolid provides CF-aware transactional stores.
 
 ```rust
 use rocksolid::{RocksDbTxnStore, tx::tx_store::RocksDbTxnStoreConfig, StoreResult, StoreError};
+use rocksolid::store::DefaultCFOperations; // For store.set, store.get on committed state
 use serde::{Serialize, Deserialize};
 use tempfile::tempdir;
 
@@ -230,14 +236,14 @@ fn main() -> StoreResult<()> {
     let config = RocksDbTxnStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
-        ..Default::default()
+        // ..other fields if needed, or rely on their defaults from the struct
     };
 
-    let txn_store = RocksDbTxnStore::open(config)?; // Corrected: uses ::open
+    let txn_store = RocksDbTxnStore::open(config)?;
 
-    // Initial setup (auto-committed to default CF)
-    txn_store.set("acc:A", &Account { id: "A".into(), balance: 100 })?;
-    txn_store.set("acc:B", &Account { id: "B".into(), balance: 50 })?;
+    // Initial setup (auto-committed to default CF using DefaultCFOperations)
+    txn_store.put("acc:A", &Account { id: "A".into(), balance: 100 })?;
+    txn_store.put("acc:B", &Account { id: "B".into(), balance: 50 })?;
 
     transfer_funds(&txn_store, "acc:A", "acc:B", 20)?;
     println!("Transfer successful!");
@@ -247,12 +253,13 @@ fn main() -> StoreResult<()> {
 }
 ```
 
-**2. CF-Aware Transactions (using `RocksDbCfTxnStore`)**
+**2. CF-Aware Transactions (using `RocksDbCFTxnStore`)**
 
 ```rust
-use rocksolid::tx::{RocksDbCfTxnStore, cf_tx_store::RocksDbCFTxnStoreConfig, cf_tx_store::CFTxConfig};
+use rocksolid::tx::{RocksDbCFTxnStore, cf_tx_store::{RocksDbCFTxnStoreConfig, CFTxConfig}};
 use rocksolid::config::BaseCfConfig;
 use rocksolid::StoreResult;
+use rocksolid::CFOperations; // For store.get_in_txn, store.put_in_txn_cf
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -263,16 +270,12 @@ struct Order { id: String, amount: f64, status: String }
 const ORDERS_CF: &str = "orders_cf";
 const CUSTOMERS_CF: &str = "customers_cf";
 
-fn process_order(store: &RocksDbCfTxnStore, order_id: &str, customer_id: &str, updated_customer_data: &String) -> StoreResult<()> {
-    // Example: Using execute_transaction for automatic commit/rollback
+fn process_order(store: &RocksDbCFTxnStore, order_id: &str, customer_id: &str, updated_customer_data: &String) -> StoreResult<()> {
     store.execute_transaction(None, |txn| {
-        // Example: Get order from ORDERS_CF
         let _order_data: Option<Order> = store.get_in_txn(txn, ORDERS_CF, order_id)?;
         // ... process order ...
-
-        // Example: Update customer record in CUSTOMERS_CF
         store.put_in_txn_cf(txn, CUSTOMERS_CF, customer_id, updated_customer_data)?;
-        Ok(()) // Return Ok to commit, or Err to rollback
+        Ok(())
     })
 }
 
@@ -294,9 +297,9 @@ fn main() -> StoreResult<()> {
             CUSTOMERS_CF.to_string(),
         ],
         column_family_configs: cf_configs,
-        ..Default::default()
+        // ..other fields if needed, or rely on their defaults from the struct
     };
-    let cf_txn_store = RocksDbCfTxnStore::open(config)?; // Corrected: uses ::open
+    let cf_txn_store = RocksDbCFTxnStore::open(config)?;
     let dummy_customer_data = "Updated Customer Data".to_string();
     process_order(&cf_txn_store, "order123", "cust456", &dummy_customer_data)?;
     println!("CF-aware transaction processed.");
@@ -306,15 +309,14 @@ fn main() -> StoreResult<()> {
 
 ## Merge Operators & Routing (Per-CF) 🔄
 
-Configure merge operators per-CF via `BaseCfConfig` in `RocksDbCfStoreConfig` (or `CFTxConfig` for transactional stores).
+Configure merge operators per-CF via `BaseCfConfig` in `RocksDbCFStoreConfig` (or `CFTxConfig` for transactional stores).
 
 ```rust
-use rocksolid::cf_store::{RocksDbCfStore, CFOperations};
-use rocksolid::config::{RocksDbCfStoreConfig, BaseCfConfig, RockSolidMergeOperatorCfConfig};
-use rocksolid::merge_routing::MergeRouterBuilder; // Used if routing merge ops by key pattern
+use rocksolid::cf_store::{RocksDbCFStore, CFOperations};
+use rocksolid::config::{RocksDbCFStoreConfig, BaseCfConfig, RockSolidMergeOperatorCfConfig};
 use rocksolid::types::{MergeValue, MergeValueOperator};
 use rocksolid::StoreResult;
-use rocksdb::MergeOperands;
+use rocksdb::MergeOperands; // Important for merge function signature
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
@@ -324,22 +326,21 @@ const SETS_CF: &str = "sets_cf";
 #[derive(Serialize, Deserialize, Debug)]
 struct SimpleSet(HashSet<String>);
 
+// Example merge function. Operands for custom merge operators are raw byte slices.
+// The application logic defines how these bytes are interpreted (e.g., as serialized MergeValue<SimpleSet>).
 fn set_union_full_handler(
-  _key: &[u8], existing_val: Option<&[u8]>, operands: &MergeOperands, _params: &matchit::Params
+  _key: &[u8], existing_val_bytes: Option<&[u8]>, operands: &MergeOperands, _params: &matchit::Params
 ) -> Option<Vec<u8>> {
-  let mut current_set: HashSet<String> = existing_val
-      .and_then(|v| rocksolid::deserialize_value::<SimpleSet>(v).ok())
+  let mut current_set: HashSet<String> = existing_val_bytes
+      .and_then(|v_bytes| rocksolid::deserialize_value::<SimpleSet>(v_bytes).ok()) // Existing value is SimpleSet
       .map(|s| s.0)
       .unwrap_or_default();
-  for op in operands {
-      // Operands are assumed to be serialized MergeValue<SimpleSet>
-      if let Ok(merge_value_struct) = rocksolid::deserialize_value::<MergeValue<SimpleSet>>(op) {
-          current_set.extend(merge_value_struct.1.0); // Access HashSet from SimpleSet
-      } else {
-           // Or handle if ops are just serialized SimpleSet directly if merge is simpler
-           if let Ok(operand_set) = rocksolid::deserialize_value::<SimpleSet>(op) {
-               current_set.extend(operand_set.0);
-           }
+
+  for op_bytes in operands { // Each op_bytes is a serialized MergeValue<SimpleSet>
+      if let Ok(merge_val_struct) = rocksolid::deserialize_value::<MergeValue<SimpleSet>>(op_bytes) {
+          if merge_val_struct.0 == MergeValueOperator::SetUnion { // Check operator if needed
+              current_set.extend(merge_val_struct.1.0); // merge_val_struct.1 is SimpleSet
+          }
       }
   }
   rocksolid::serialize_value(&SimpleSet(current_set)).ok()
@@ -361,15 +362,17 @@ fn main() -> StoreResult<()> {
     });
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), BaseCfConfig::default());
 
-    let config = RocksDbCfStoreConfig {
+    let config = RocksDbCFStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
         column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), SETS_CF.to_string()],
-        column_family_configs: cf_configs, ..Default::default()
+        column_family_configs: cf_configs,
+        // ..other fields if needed
     };
-    let store = RocksDbCfStore::open(config)?;
+    let store = RocksDbCFStore::open(config)?;
 
     let mut initial_set = HashSet::new(); initial_set.insert("user1".to_string());
+    // The MergeValue contains the actual data to merge (SimpleSet in this case)
     store.merge(SETS_CF, "online_users", &MergeValue(MergeValueOperator::SetUnion, SimpleSet(initial_set)))?;
 
     let mut next_set = HashSet::new(); next_set.insert("user2".to_string());
@@ -385,17 +388,17 @@ fn main() -> StoreResult<()> {
 
 ## Key/Value Expiry Hints ⏱️ (CF-Aware)
 
-Store values with an expiry timestamp in any CF using `RocksDbCfStore` or the default CF with `RocksDbStore`.
+Store values with an expiry timestamp in any CF using `RocksDbCFStore` or the default CF with `RocksDbStore`.
 
 ```rust
-use rocksolid::cf_store::{RocksDbCfStore, CFOperations}; // CFOperations for specific CF
-use rocksolid::config::RocksDbCfStoreConfig;
+use rocksolid::cf_store::{RocksDbCFStore, CFOperations};
+use rocksolid::config::RocksDbCFStoreConfig;
 use rocksolid::types::ValueWithExpiry;
 use rocksolid::StoreResult;
 use serde::{Serialize, Deserialize};
 use tempfile::tempdir;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use std::collections::HashMap; // For cf_configs
+use std::collections::HashMap;
 
 const SESSIONS_CF: &str = "sessions_cf";
 
@@ -410,19 +413,19 @@ fn main() -> StoreResult<()> {
     cf_configs.insert(SESSIONS_CF.to_string(), Default::default());
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), Default::default());
 
-    let config = RocksDbCfStoreConfig {
+    let config = RocksDbCFStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
         column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), SESSIONS_CF.to_string()],
         column_family_configs: cf_configs,
-        ..Default::default()
+        // ..other fields if needed
     };
-    let store = RocksDbCfStore::open(config)?;
+    let store = RocksDbCFStore::open(config)?;
 
     let session = SessionData { user_id: 123, token: "abc".to_string() };
     let expire_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600;
 
-    store.put_with_expiry_(SESSIONS_CF, "session:123", &session, expire_time)?; // Using RocksDbCfStore method
+    store.put_with_expiry(SESSIONS_CF, "session:123", &session, expire_time)?;
 
     let retrieved_expiry: Option<ValueWithExpiry<SessionData>> =
         store.get_with_expiry(SESSIONS_CF, "session:123")?;
@@ -440,14 +443,14 @@ fn main() -> StoreResult<()> {
 
 ## Configuration Structures ⚙️
 
-*   **`RocksDbCfStoreConfig`**: For `RocksDbCfStore` (non-transactional). Allows DB-wide and per-CF tuning, merge operators. Uses `BaseCfConfig` for per-CF settings.
+*   **`RocksDbCFStoreConfig`**: For `RocksDbCFStore` (non-transactional). Allows DB-wide and per-CF tuning, merge operators. Uses `BaseCfConfig` for per-CF settings.
 *   **`RocksDbStoreConfig`**: For `RocksDbStore` (non-transactional). Simplified for default CF, with options for default CF's tuning and merge operator, plus DB-wide hard settings.
-*   **`RocksDbCFTxnStoreConfig`**: For `RocksDbCfTxnStore` (transactional). Similar to `RocksDbCfStoreConfig` but uses `CFTxConfig` (which wraps `BaseCfConfig`) and includes `TransactionDBOptions`.
+*   **`RocksDbCFTxnStoreConfig`**: For `RocksDbCFTxnStore` (transactional). Similar to `RocksDbCFStoreConfig` but uses `CFTxConfig` (which wraps `BaseCfConfig`) and includes `TransactionDBOptions`.
 *   **`RocksDbTxnStoreConfig`**: For `RocksDbTxnStore` (transactional). Simplified for default CF, includes `TransactionDBOptions`.
 *   **`BaseCfConfig`**: Per-CF settings (`tuning_profile`, `merge_operator: Option<RockSolidMergeOperatorCfConfig>`) used within non-transactional CF configs and wrapped by `CFTxConfig`.
 *   **`CFTxConfig`**: Per-CF settings for transactional stores, wraps `BaseCfConfig`.
 *   **`TuningProfile`**: (From `rocksolid::tuner`) Enum for pre-defined option sets.
-*   **`RockSolidMergeOperatorCfConfig` vs `MergeOperatorConfig`**: `RockSolidMergeOperatorCfConfig` is used by new CF-aware configs. The older `MergeOperatorConfig` (re-exported) is used by `RocksDbTxnStoreConfig` for its `default_cf_merge_operator`.
+*   **`RockSolidMergeOperatorCfConfig` vs `MergeOperatorConfig`**: `RockSolidMergeOperatorCfConfig` is used by `RocksDbCFStoreConfig`, `RocksDbStoreConfig`, and `BaseCfConfig`. The older `MergeOperatorConfig` (re-exported for compatibility) is used by `RocksDbTxnStoreConfig` for its `default_cf_merge_operator`.
 
 Refer to `src/config.rs`, `src/tx/cf_tx_store.rs`, and `src/tx/tx_store.rs` for detailed structures.
 
@@ -458,39 +461,40 @@ For a detailed list of functions and types, please refer to the **[generated rus
 Key components and their CF-aware nature:
 
 *   **Stores:**
-    *   `RocksDbCfStore`: Primary non-transactional CF-aware store. Implements `CFOperations`.
+    *   `RocksDbCFStore`: Primary non-transactional CF-aware store. Implements `CFOperations`.
         *   Methods like `get(cf_name, ...)`, `put(cf_name, ...)`, `batch_writer(cf_name)`.
-    *   `RocksDbStore`: Wrapper for non-transactional default CF.
-        *   Methods like `get`, `put` (on default CF). Accesses `RocksDbCfStore` via `cf_store()`. `batch_writer()` for default CF.
-    *   `RocksDbCfTxnStore`: Primary transactional CF-aware store. Implements `CFOperations` (for committed reads).
+    *   `RocksDbStore`: Wrapper for non-transactional default CF. Implements `DefaultCFOperations`.
+        *   Methods like `get`, `put` (on default CF). Accesses `RocksDbCFStore` via `cf_store()`. `batch_writer()` for default CF.
+    *   `RocksDbCFTxnStore`: Primary transactional CF-aware store. Implements `CFOperations` (for committed reads).
         *   Methods like `get(cf_name, ...)` (committed read), `put_in_txn_cf(&txn, cf_name, ...)`, `begin_transaction()`.
-    *   `RocksDbTxnStore`: Wrapper for transactional default CF focus.
-        *   Methods like `get` (committed read), `set` (auto-commit on default CF), `transaction_context()`.
-*   **`CFOperations` Trait:** Defines the interface for CF-aware data operations (implemented by `RocksDbCfStore` and `RocksDbCfTxnStore` for committed reads).
-*   **`BatchWriter`** (from `RocksDbCfStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`): Non-transactional. CF-bound on creation. Methods like `set`, `delete`, etc., operate on its bound CF. Use `raw_batch_mut()` for multi-CF atomicity.
+    *   `RocksDbTxnStore`: Wrapper for transactional default CF focus. Implements `DefaultCFOperations` (for committed reads/writes).
+        *   Methods like `get`, `put` (auto-commit on default CF), `transaction_context()`.
+*   **`CFOperations` Trait:** Defines the interface for CF-aware data operations.
+*   **`DefaultCFOperations` Trait:** Defines the interface for default CF data operations.
+*   **`BatchWriter`** (from `RocksDbCFStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`): Non-transactional. CF-bound on creation. Methods like `set`, `delete`, etc., operate on its bound CF. Use `raw_batch_mut()` for multi-CF atomicity.
 *   **`TransactionContext`** (from `RocksDbTxnStore::transaction_context()`): Manages a transaction on the default CF.
-*   **`Tx<'a>`** (from `RocksDbCfTxnStore::begin_transaction()` or `RocksDbTxnStore::begin_transaction()`): Raw `rocksdb::Transaction` object.
+*   **`Tx<'a>`** (from `store.begin_transaction()`): Raw `rocksdb::Transaction` object.
 *   **Configuration:** As detailed above.
 *   **Macros:**
-    *   Default CF macros (e.g., `generate_dao_get!`) work with `RocksDbStore` (non-txn) and `RocksDbTxnStore` (for committed default CF reads).
-    *   CF-Aware macros (e.g., `generate_dao_get_cf!`) work with `RocksDbCfStore` (non-txn) and `RocksDbCfTxnStore` (for committed reads) and take a `cf_name`.
-    *   Transactional macros (e.g., `generate_dao_set_in_txn!`) currently attempt to call static methods on `RocksDbTxnStore` for default CF. For general transactional ops: use `TransactionContext` methods (default CF) or direct methods on a `Tx` object or instance methods on `RocksDbCfTxnStore` (like `put_in_txn_cf`).
-*   **Utilities (`utils.rs`):** `backup_db`, `migrate_db` use `RocksDbCfStoreConfig` and are CF-aware for non-transactional stores.
+    *   Default CF macros (e.g., `generate_dao_get!`) work with stores implementing `DefaultCFOperations`.
+    *   CF-Aware macros (e.g., `generate_dao_get_cf!`) work with stores implementing `CFOperations` and take a `cf_name`.
+    *   Transactional macros (e.g., `generate_dao_set_in_txn!`) defined in `macros.rs` attempt to call static methods on `RocksDbTxnStore`. For general transactional ops: use `TransactionContext` methods (default CF), `RocksDbCFTxnStore`'s `_in_txn_cf` methods, or methods directly on a `Tx` object.
+*   **Utilities (`utils.rs`):** `backup_db`, `migrate_db` use `RocksDbCFStoreConfig` and are CF-aware for non-transactional stores.
 
 ## Running Examples
 
-Update example names if they change (current example paths):
+Example paths are relative to `xs_rs/rocksolid/`.
 
 ```bash
-cargo run --example basic_usage # Demonstrates RocksDbStore, default CF non-txn
-cargo run --example cf_store_operations # Demonstrates RocksDbCfStore, multi-CF non-txn, batching
-cargo run --example batching # Also RocksDbCfStore, focusing on various batching techniques
-cargo run --example merge_router # MergeRouterBuilder with RocksDbCfStore
-cargo run --example transactional # RocksDbTxnStore, default CF transactions with TransactionContext
-cargo run --example cf_txn_store_operations # RocksDbCfTxnStore, multi-CF transactions
-cargo run --example value_expiry_example # ValueWithExpiry using RocksDbCfStore
-cargo run --example macros_cf_usage # Using DAO macros with RocksDbCfStore
-cargo run --example tuning_showcase # Demonstrates TuningProfiles with RocksDbCfStore
+cargo run --example basic_usage
+cargo run --example cf_store_operations
+cargo run --example batching
+cargo run --example merge_router
+cargo run --example transactional
+cargo run --example cf_txn_store_operations
+cargo run --example value_expiry_example
+cargo run --example macros_cf_usage
+cargo run --example tuning_showcase
 ```
 
 ## Contributing 🤝

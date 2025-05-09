@@ -1,26 +1,38 @@
 // rocksolid/src/tx/cf_tx_store.rs
 
-//! Provides the core CF-aware transactional store, `RocksDbCfTxnStore`.
+//! Provides the core CF-aware transactional store, `RocksDbCFTxnStore`.
 
 use crate::config::{
   convert_recovery_mode, default_full_merge, default_partial_merge, BaseCfConfig, RecoveryMode,
   RockSolidMergeOperatorCfConfig as RockSolidMergeOperatorConfig,
 };
 use crate::error::{StoreError, StoreResult};
+use crate::iter::{ControlledIter, IterConfig};
 use crate::serialization::{deserialize_kv, deserialize_value, serialize_key, serialize_value};
 use crate::tuner::{PatternTuner, Tunable, TuningProfile};
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
-use crate::CFOperations;
+use crate::{deserialize_kv_expiry, CFOperations};
 
 use bytevec::ByteDecodable;
 use rocksdb::{
-  ColumnFamilyDescriptor, Direction, IteratorMode, Options as RocksDbOptions, ReadOptions, Transaction, TransactionDB, TransactionDBOptions, TransactionOptions, WriteBatchWithTransaction, WriteOptions as RocksDbWriteOptions, DB as StandardDB // For destroy
+  ColumnFamilyDescriptor,
+  Direction,
+  IteratorMode,
+  Options as RocksDbOptions,
+  ReadOptions,
+  Transaction,
+  TransactionDB,
+  TransactionDBOptions,
+  TransactionOptions,
+  WriteBatchWithTransaction,
+  WriteOptions as RocksDbWriteOptions,
+  DB as StandardDB, // For destroy
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug, path::Path, sync::Arc};
 
-// --- Configuration for RocksDbCfTxnStore ---
+// --- Configuration for RocksDbCFTxnStore ---
 
 pub type CustomDbAndCfFn = dyn for<'a> Fn(&'a str, &'a mut Tunable<RocksDbOptions>) + Send + Sync + 'static;
 
@@ -53,7 +65,7 @@ pub struct RocksDbCFTxnStoreConfig {
 
 impl Debug for RocksDbCFTxnStoreConfig {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("RocksDbCfTxnStoreConfig")
+    f.debug_struct("RocksDbCFTxnStoreConfig")
       .field("path", &self.path)
       .field("create_if_missing", &self.create_if_missing)
       .field("db_tuning_profile_is_some", &self.db_tuning_profile.is_some())
@@ -68,7 +80,7 @@ impl Debug for RocksDbCFTxnStoreConfig {
   }
 }
 
-// --- RocksDbCfTxnStore Definition ---
+// --- RocksDbCFTxnStore Definition ---
 /// The core Column Family (CF)-aware transactional key-value store.
 ///
 /// This store provides methods to interact with a `rocksdb::TransactionDB`,
@@ -82,7 +94,7 @@ pub struct RocksDbCFTxnStore {
 
 impl Debug for RocksDbCFTxnStore {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("RocksDbCfTxnStore")
+    f.debug_struct("RocksDbCFTxnStore")
       .field("path", &self.path)
       .field("db", &"<Arc<rocksdb::TransactionDB>>")
       .field("cf_names", &self.cf_names.keys().collect::<Vec<&String>>())
@@ -94,7 +106,7 @@ impl RocksDbCFTxnStore {
   /// Opens or creates a CF-aware transactional RocksDB database.
   pub fn open(cfg: RocksDbCFTxnStoreConfig) -> StoreResult<Self> {
     log::info!(
-      "Opening RocksDbCfTxnStore at path: '{}'. CFs: {:?}",
+      "Opening RocksDbCFTxnStore at path: '{}'. CFs: {:?}",
       cfg.path,
       cfg.column_families_to_open
     );
@@ -389,24 +401,151 @@ impl CFOperations for RocksDbCFTxnStore {
   }
 
   // --- CF-Aware ITERATOR operations on COMMITTED data ---
-  fn find_by_prefix<Key, Val>(&self, cf_name: &str, prefix: &Key) -> StoreResult<Vec<(Key, Val)>>
+
+  // --- Iterator / Find Operations ---
+  fn iterate_cf<'a, Key, Val>(
+    &'a self,
+    cfg: IterConfig<Key, Val>,
+  ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
+    Val: DeserializeOwned + Debug + 'a,
+  {
+    // serialize prefix & start
+    let ser_prefix = cfg.prefix.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let ser_start = cfg.start.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let dir = if cfg.reverse {
+      rocksdb::Direction::Reverse
+    } else {
+      rocksdb::Direction::Forward
+    };
+    let mode = if let Some(start) = ser_start.as_ref() {
+      rocksdb::IteratorMode::From(start.as_ref(), dir)
+    } else if let Some(pref) = ser_prefix.as_ref() {
+      rocksdb::IteratorMode::From(pref.as_ref(), dir)
+    } else if cfg.reverse {
+      rocksdb::IteratorMode::End
+    } else {
+      rocksdb::IteratorMode::Start
+    };
+
+    // choose raw iterator
+    let raw: Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + '_> =
+      if let Some(pref) = ser_prefix.as_ref() {
+        if cfg.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+          Box::new(self.db.prefix_iterator(pref))
+        } else {
+          let handle = self.get_cf_handle(&cfg.cf_name)?;
+          Box::new(self.db.prefix_iterator_cf(&handle, pref))
+        }
+      } else if cfg.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+        Box::new(self.db.iterator(mode))
+      } else {
+        let handle = self.get_cf_handle(&cfg.cf_name)?;
+        Box::new(self.db.iterator_cf(&handle, mode))
+      };
+
+    let iter = ControlledIter {
+      raw,
+      control: cfg.control,
+      deserializer: cfg.deserializer,
+      idx: 0,
+    };
+    Ok(Box::new(iter))
+  }
+
+  /// Core method: iterate with control only, no collection
+  fn iterate_cf_control<Key>(&self, prefix: Option<Key>, start: Option<Key>, mut cfg: IterConfig<(), ()>) -> Result<(), StoreError>
   where
     Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+  {
+    let ser_prefix = prefix.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let ser_start = start.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let dir = if cfg.reverse {
+      rocksdb::Direction::Reverse
+    } else {
+      rocksdb::Direction::Forward
+    };
+    let mode = if let Some(s) = ser_start.as_ref() {
+      rocksdb::IteratorMode::From(s.as_ref(), dir)
+    } else if let Some(p) = ser_prefix.as_ref() {
+      rocksdb::IteratorMode::From(p.as_ref(), dir)
+    } else if cfg.reverse {
+      rocksdb::IteratorMode::End
+    } else {
+      rocksdb::IteratorMode::Start
+    };
+
+    let mut iter = if let Some(p) = ser_prefix.as_ref() {
+      if cfg.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+        self.db.prefix_iterator(p)
+      } else {
+        let handle = self.get_cf_handle(&cfg.cf_name)?;
+        self.db.prefix_iterator_cf(&handle, p)
+      }
+    } else if cfg.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+      self.db.iterator(mode)
+    } else {
+      let handle = self.get_cf_handle(&cfg.cf_name)?;
+      self.db.iterator_cf(&handle, mode)
+    };
+
+    for res in iter {
+      let (key_bytes, val_bytes) = res.map_err(StoreError::RocksDb)?;
+      if let Some(ref mut f) = cfg.control {
+        if let IterationControlDecision::Stop = f(&key_bytes, &val_bytes, 0) {
+          break;
+        }
+      }
+    }
+    Ok(())
+  }
+
+  // Locates key with start key. Stops iterating using the ControlFn((key, value).
+  fn iterate_by_prefix_control<Key, F>(
+    &self,
+    cf_name: &str,
+    start_key: Key,
+    direction: Direction,
+    mut control_fn: F,
+  ) -> Result<(), StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
+  {
+    let cfg = IterConfig::new(cf_name, |_k, _v| Ok(((), ())))
+      .reverse(matches!(direction, Direction::Reverse))
+      .control(move |k, v, _| control_fn(k, v));
+    self.iterate_cf_control(Some(start_key.clone()), None, cfg)
+  }
+
+  fn iterate_from_control<Key, F>(
+    &self,
+    cf_name: &str,
+    start_key: Key,
+    direction: Direction,
+    mut control_fn: F,
+  ) -> Result<(), StoreError>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
+  {
+    let cfg = IterConfig::new(cf_name, |_k, _v| Ok(((), ())))
+      .reverse(matches!(direction, Direction::Reverse))
+      .control(move |k, v, _| control_fn(k, v));
+    self.iterate_cf_control(None, Some(start_key), cfg)
+  }
+
+  fn find_by_prefix<Key, Val>(&self, cf_name: &str, prefix: &Key, direction: Direction) -> StoreResult<Vec<(Key, Val)>>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
   {
-    let ser_prefix = serialize_key(prefix.as_ref())?;
-    let iter = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
-      self.db.prefix_iterator(&ser_prefix)
-    } else {
-      let handle = self.get_cf_handle(cf_name)?;
-      self.db.prefix_iterator_cf(&handle, &ser_prefix)
-    };
-    iter
-      .map(|res| match res {
-        Ok((k, v)) => deserialize_kv(k.as_ref(), v.as_ref()),
-        Err(e) => Err(StoreError::RocksDb(e)),
-      })
-      .collect()
+    let cfg = IterConfig::new(cf_name, |k, v| deserialize_kv(k, v))
+      .prefix(prefix.clone())
+      .reverse(matches!(direction, Direction::Reverse));
+
+    self.iterate_cf(cfg)?.collect()
   }
 
   fn find_from<Key, Val, F>(
@@ -414,38 +553,66 @@ impl CFOperations for RocksDbCFTxnStore {
     cf_name: &str,
     start_key: Key,
     direction: Direction,
-    mut control_fn: F,
+    control_fn: F,
   ) -> StoreResult<Vec<(Key, Val)>>
   where
     Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
-    F: FnMut(&Key, &Val, usize) -> IterationControlDecision,
+    F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
-    let ser_start_key = serialize_key(start_key.as_ref())?;
-    let mode = IteratorMode::From(&ser_start_key, direction);
-    let iter = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
-      self.db.iterator_opt(mode, Default::default())
-    } else {
-      let handle = self.get_cf_handle(cf_name)?;
-      self.db.iterator_cf_opt(&handle, Default::default(), mode)
-    };
+    let cfg = IterConfig::new(cf_name, |k, v| deserialize_kv(k, v))
+      .start(start_key)
+      .reverse(matches!(direction, Direction::Reverse))
+      .control(control_fn);
+    self.iterate_cf(cfg)?.collect()
+  }
 
-    let mut results = Vec::new();
-    for item_res in iter {
-      let (key_bytes, val_bytes) = item_res.map_err(StoreError::RocksDb)?;
-      match deserialize_kv(key_bytes.as_ref(), val_bytes.as_ref()) {
-        Ok((key, val)) => match control_fn(&key, &val, results.len()) {
-          IterationControlDecision::Keep => results.push((key, val)),
-          IterationControlDecision::Skip => continue,
-          IterationControlDecision::Stop => break,
-        },
-        Err(e) => {
-          log::error!("Deserialization failed in find_from_cf for CF '{}': {}", cf_name, e);
-          return Err(e);
-        }
-      }
-    }
-    Ok(results)
+  fn find_from_with_expire_val<Key, Val, F>(
+    &self,
+    cf_name: &str,
+    start: &Key,
+    reverse: bool,
+    control_fn: F,
+  ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Val: DeserializeOwned + Debug,
+    F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
+  {
+    let cfg = IterConfig::new(cf_name, |k, v| deserialize_kv_expiry(k, v))
+      .start(start.clone())
+      .reverse(reverse)
+      .control(control_fn);
+
+    self
+      .iterate_cf(cfg)
+      .map_err(|e| e.to_string())?
+      .collect::<Result<_, _>>()
+      .map_err(|e| e.to_string())
+  }
+
+  fn find_by_prefix_with_expire_val<Key, Val, F>(
+    &self,
+    cf_name: &str,
+    start: &Key,
+    reverse: bool,
+    control_fn: F,
+  ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
+  where
+    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Val: DeserializeOwned + Debug,
+    F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
+  {
+    let cfg = IterConfig::new(cf_name, |k, v| deserialize_kv_expiry(k, v))
+      .prefix(start.clone())
+      .reverse(reverse)
+      .control(control_fn);
+
+    self
+      .iterate_cf(cfg)
+      .map_err(|e| e.to_string())?
+      .collect::<Result<_, _>>()
+      .map_err(|e| e.to_string())
   }
 
   fn put<K, V>(&self, cf_name: &str, key: K, value: &V) -> StoreResult<()>
@@ -478,7 +645,7 @@ impl CFOperations for RocksDbCFTxnStore {
     .map_err(StoreError::RocksDb)
   }
 
-  fn put_with_expiry_<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  fn put_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
   where
     K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,

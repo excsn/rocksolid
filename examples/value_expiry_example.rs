@@ -1,6 +1,5 @@
-// examples/value_expiry_example.rs
-use rocksolid::cf_store::{CFOperations, RocksDbCfStore};
-use rocksolid::config::{BaseCfConfig, RocksDbCfStoreConfig};
+use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
+use rocksolid::config::{BaseCfConfig, RocksDbCFStoreConfig};
 use rocksolid::types::ValueWithExpiry;
 use rocksolid::StoreResult;
 use serde::{Deserialize, Serialize};
@@ -27,7 +26,7 @@ fn main() -> StoreResult<()> {
   cf_configs.insert(CACHE_CF.to_string(), BaseCfConfig::default());
   cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), BaseCfConfig::default());
 
-  let config = RocksDbCfStoreConfig {
+  let config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), CACHE_CF.to_string()],
@@ -35,8 +34,8 @@ fn main() -> StoreResult<()> {
     ..Default::default()
   };
 
-  let store = RocksDbCfStore::open(config)?;
-  println!("RocksDbCfStore opened for expiry example.");
+  let store = RocksDbCFStore::open(config)?;
+  println!("RocksDbCFStore opened for expiry example.");
 
   let current_time_secs = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
@@ -49,7 +48,7 @@ fn main() -> StoreResult<()> {
   };
   let obj1_key = format!("cache:{}", obj1_id);
   let obj1_expiry_time = current_time_secs() + 2;
-  store.put_with_expiry_(CACHE_CF, &obj1_key, &obj1, obj1_expiry_time)?;
+  store.put_with_expiry(CACHE_CF, &obj1_key, &obj1, obj1_expiry_time)?;
   println!(
     "Stored '{}' in CF '{}' with expiry at (approx) T+2s.",
     obj1_key, CACHE_CF
@@ -64,7 +63,7 @@ fn main() -> StoreResult<()> {
   };
   let obj2_key = format!("cache:{}", obj2_id);
   let obj2_expiry_time = current_time_secs() + 10;
-  store.put_with_expiry_(CACHE_CF, &obj2_key, &obj2, obj2_expiry_time)?;
+  store.put_with_expiry(CACHE_CF, &obj2_key, &obj2, obj2_expiry_time)?;
   println!(
     "Stored '{}' in CF '{}' with expiry at (approx) T+10s.",
     obj2_key, CACHE_CF

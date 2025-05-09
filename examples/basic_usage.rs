@@ -1,8 +1,5 @@
-// examples/basic_usage.rs
-
-use rocksolid::{config::RocksDbStoreConfig, RocksDbStore, StoreResult}; // Updated imports
+use rocksolid::{config::RocksDbStoreConfig, store::DefaultCFOperations, RocksDbStore, StoreResult};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use tempfile::tempdir;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -37,7 +34,7 @@ fn main() -> StoreResult<()> {
       quantity: 100,
     };
     let item1_key = format!("item:{}", item1.sku);
-    store.set(&item1_key, &item1)?;
+    store.put(&item1_key, &item1)?;
     println!("Set: {:?}", item1);
 
     let retrieved_item: Option<Item> = store.get(&item1_key)?;
@@ -62,19 +59,19 @@ fn main() -> StoreResult<()> {
       quantity: 90,
       ..item1.clone()
     };
-    store.set(&item1_key, &updated_item1)?;
+    store.put(&item1_key, &updated_item1)?;
     let retrieved_updated: Option<Item> = store.get(&item1_key)?;
     println!("Get after Update: {:?}", retrieved_updated);
     assert_eq!(retrieved_updated.as_ref(), Some(&updated_item1));
 
     // --- Delete ---
-    store.remove(&item1_key)?;
+    store.delete(&item1_key)?;
     let retrieved_deleted: Option<Item> = store.get(&item1_key)?;
     println!("Get after Delete: {:?}", retrieved_deleted);
     assert!(retrieved_deleted.is_none());
 
     // --- Raw Operations (implicitly on default CF) ---
-    store.set_raw(&"config:feature_x", b"enabled")?;
+    store.put_raw(&"config:feature_x", b"enabled")?;
     let raw_val = store.get_raw(&"config:feature_x")?;
     println!(
       "Get Raw 'config:feature_x': {:?}",
@@ -83,9 +80,9 @@ fn main() -> StoreResult<()> {
     assert_eq!(raw_val, Some(b"enabled".to_vec()));
 
     // --- To use BatchWriter (even for default CF) with RocksDbStore ---
-    // You need to get the underlying RocksDbCfStore
+    // You need to get the underlying RocksDbCFStore
     println!("\n--- Batch operation on default CF via cf_store() ---");
-    let cf_store_ref = store.cf_store(); // Get Arc<RocksDbCfStore>
+    let cf_store_ref = store.cf_store(); // Get Arc<RocksDbCFStore>
     let mut batch = cf_store_ref.batch_writer(rocksdb::DEFAULT_COLUMN_FAMILY_NAME);
     let item_batch = Item {
       sku: "BCH-001".into(),

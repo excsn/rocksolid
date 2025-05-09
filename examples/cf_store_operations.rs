@@ -1,9 +1,9 @@
-// examples/cf_store_operations.rs
-use rocksolid::cf_store::{CFOperations, RocksDbCfStore};
-use rocksolid::config::{BaseCfConfig, RocksDbCfStoreConfig};
+use rocksdb::Direction;
+use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
+use rocksolid::config::{BaseCfConfig, RocksDbCFStoreConfig};
 use rocksolid::tuner::TuningProfile;
 use rocksolid::types::IterationControlDecision;
-use rocksolid::StoreResult; // BatchWriter is re-exported via lib.rs
+use rocksolid::StoreResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -24,7 +24,7 @@ fn main() -> StoreResult<()> {
   let db_path = temp_dir.path().join("cf_store_ops_db_new_batch_api");
   println!("Database path: {}", db_path.display());
 
-  // 1. Configure RocksDbCfStore
+  // 1. Configure RocksDbCFStore
   let mut cf_configs = HashMap::new();
   cf_configs.insert(
     DATA_CF_A.to_string(),
@@ -41,7 +41,7 @@ fn main() -> StoreResult<()> {
   cf_configs.insert(DATA_CF_B.to_string(), BaseCfConfig::default());
   cf_configs.insert(DEFAULT_CF.to_string(), BaseCfConfig::default());
 
-  let config = RocksDbCfStoreConfig {
+  let config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![
@@ -62,8 +62,8 @@ fn main() -> StoreResult<()> {
   };
 
   // 2. Open the store
-  let store = RocksDbCfStore::open(config)?;
-  println!("RocksDbCfStore opened successfully.");
+  let store = RocksDbCFStore::open(config)?;
+  println!("RocksDbCFStore opened successfully.");
 
   // 3. CRUD operations on different CFs (remains the same)
   let item_a1 = AppData { id: "a1".into(), value: 100, description: "Item in CF A".into() };
@@ -151,7 +151,7 @@ fn main() -> StoreResult<()> {
   // 5. Iteration (remains the same)
   println!("\nIterating DATA_CF_A with prefix 'a':");
   let prefix_key = "a".to_string();
-  let prefixed_items: Vec<(String, AppData)> = store.find_by_prefix(DATA_CF_A, &prefix_key)?;
+  let prefixed_items: Vec<(String, AppData)> = store.find_by_prefix(DATA_CF_A, &prefix_key, Direction::Forward)?;
   for (k, v) in &prefixed_items {
     println!("  Found in {}: {} -> {:?}", DATA_CF_A, k, v);
   }
