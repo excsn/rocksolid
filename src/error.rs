@@ -49,7 +49,6 @@ pub trait StoreResultExt<T> {
   /// - If `self` is `Ok(value)`, applies `ok_fn(value)` and wraps the resulting `Option<RVal>` in `Ok`.
   /// - If `self` is `Err(StoreError::NotFound { .. })`, returns `Ok(None)`.
   /// - If `self` is any other `Err(store_error)`, returns `Err(store_error)`.
-  #[inline]
   fn map_to_option<OkFunc, RVal>(self, ok_fn: OkFunc) -> StoreResult<Option<RVal>>
   where
     Self: Sized, // Indicates that `self` can be consumed
@@ -60,7 +59,6 @@ pub trait StoreResultExt<T> {
   /// - If `self` is `Ok(value)`, applies `ok_fn(value)` and wraps the resulting `Vec<RVal>` in `Ok`.
   /// - If `self` is `Err(StoreError::NotFound { .. })`, returns `Ok(vec![])`.
   /// - If `self` is any other `Err(store_error)`, returns `Err(store_error)`.
-  #[inline]
   fn map_to_vec<OkFunc, RVal>(self, ok_fn: OkFunc) -> StoreResult<Vec<RVal>>
   where
     Self: Sized,

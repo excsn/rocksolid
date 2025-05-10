@@ -14,9 +14,10 @@
     *   **`RocksDbCFTxnStore`**: The primary, public store for CF-aware **transactional** operations using `rocksdb::TransactionDB`.
     *   **`RocksDbTxnStore`**: A convenience wrapper around `RocksDbCFTxnStore` for transactional operations primarily focused on the **default Column Family**.
 *   **Flexible Configuration:**
-    *   **`RocksDbCFStoreConfig` / `RocksDbCFTxnStoreConfig`**: Comprehensive configuration for CF-aware stores, allowing per-CF tuning profiles and merge operators.
+    *   **`RocksDbCFStoreConfig` / `RocksDbCFTxnStoreConfig`**: Comprehensive configuration for CF-aware stores, allowing per-CF tuning profiles, merge operators, and comparators.
     *   **`RocksDbStoreConfig` / `RocksDbTxnStoreConfig`**: Simplified configuration for default-CF focused usage.
     *   **`TuningProfile`**: Pre-defined RocksDB option sets for common workloads (DB-wide or per-CF) via the `tuner` module (e.g., `LatestValue`, `MemorySaver`, `RealTime`, `TimeSeries`, `SparseBitmap`). Each profile can include I/O capping options.
+    *   **`RockSolidComparatorOpt`**: Specify custom key comparison strategies (e.g., natural sorting) per Column Family (requires "natlex\_sort" or "nat\_sort" features).
 *   **Simplified API:** Clear methods for common operations (e.g., `get`, `put`, `merge`, `delete`, iterators) targeting specific CFs via the `CFOperations` trait implemented by `RocksDbCFStore` and `RocksDbCFTxnStore` (for committed reads).
 *   **Automatic Serialization:** Seamlessly serialize/deserialize keys (using `bytevec`) and values (using MessagePack via `rmp_serde`) with minimal boilerplate via `serde`.
 *   **Value Expiry Hints:** Built-in support for associating expiry timestamps (Unix epoch seconds) with values using `ValueWithExpiry<T>`. *(Note: Automatic data removal based on expiry (e.g., TTL compaction) requires further RocksDB configuration not directly managed by RockSolid's basic API; application logic or custom compaction filters are typically needed).*
@@ -25,6 +26,7 @@
     *   **`RocksDbTxnStore`**: Offers a `TransactionContext` for managing operations primarily on the default CF, and `execute_transaction()` for automatic commit/rollback on the default CF.
 *   **Atomic Batch Writes (CF-Aware):** Efficiently group multiple write operations into atomic batches targeting specific CFs using the fluent `BatchWriter` API (obtained from `RocksDbCFStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`). Multi-CF atomic batches are possible using `raw_batch_mut()`. Non-transactional.
 *   **Configurable Merge Operators (Per-CF):** Supports standard merge operators and includes a flexible **Merge Router** (`MergeRouterBuilder`) to dispatch merge operations based on key patterns. Configurable per Column Family.
+    *   ⚠️ **Merge Router Warning**: The router functions created by `MergeRouterBuilder` use **globally shared static routers**. If you use a merge operator name derived from `MergeRouterBuilder` across different Column Families (even in different database instances within the same process), they will share the same routing rules. Ensure your key patterns or key prefixes are unique across these CFs to prevent unintended routing conflicts.
 *   **Error Handling:** Uses a clear `StoreError` enum (including `UnknownCf`) and `StoreResult<T>`.
 *   **Utilities (CF-Aware):** Includes utilities for database backup (checkpointing) and migration (`backup_db`, `migrate_db`) aware of Column Families for non-transactional stores (using `RocksDbCFStoreConfig`).
 *   **Helper Macros:** Optional macros (`generate_dao_*` and `generate_dao_*_cf`) to reduce boilerplate for common data access patterns on default-CF or specific-CF stores.
@@ -36,6 +38,13 @@ Add `rocksolid` to your `Cargo.toml`:
 ```toml
 [dependencies]
 rocksolid = "2.1.0" # Ensure this matches the latest version
+serde = { version = "1.0", features = ["derive"] }
+```
+
+To use custom comparators like natural sorting, enable the corresponding features:
+```toml
+[dependencies]
+rocksolid = { version = "2.1.0", features = ["natlex_sort", "nat_sort"] }
 serde = { version = "1.0", features = ["derive"] }
 ```
 
@@ -64,14 +73,15 @@ fn main() -> StoreResult<()> {
     let config = RocksDbStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
-        // Optionally set tuning/merge for default CF
+        // Optionally set tuning/merge/comparator for default CF
         // default_cf_tuning_profile: Some(TuningProfile::LatestValue {
         //     mem_budget_mb_per_cf_hint: 32,
         //     use_bloom_filters: true,
         //     enable_compression: true,
         //     io_cap: None,
         // }),
-        // ..other fields if needed, or rely on their defaults from the struct
+        // comparator: Some(rocksolid::config::RockSolidComparatorOpt::NaturalLexicographical { ignore_case: true }), // If feature enabled
+        ..Default::default()
     };
 
     // 2. Open the default-CF convenience store
@@ -103,7 +113,7 @@ For applications requiring multiple Column Families or explicit CF control (non-
 
 ```rust
 use rocksolid::cf_store::{RocksDbCFStore, CFOperations};
-use rocksolid::config::{RocksDbCFStoreConfig, BaseCfConfig};
+use rocksolid::config::{RocksDbCFStoreConfig, BaseCfConfig, RockSolidComparatorOpt};
 use rocksolid::tuner::{TuningProfile, profiles::IoCapOpts};
 use rocksolid::StoreResult;
 use serde::{Serialize, Deserialize};
@@ -131,6 +141,7 @@ fn main() -> StoreResult<()> {
             enable_compression: true,
             io_cap: None, // Or Some(IoCapOpts {...})
         }),
+        comparator: Some(RockSolidComparatorOpt::Natural { ignore_case: false }), // Example if feature enabled
         ..Default::default()
     });
     cf_configs.insert(INVENTORY_CF.to_string(), BaseCfConfig {
@@ -155,7 +166,7 @@ fn main() -> StoreResult<()> {
             INVENTORY_CF.to_string(),
         ],
         column_family_configs: cf_configs,
-        // ..other fields if needed, or rely on their defaults from the struct
+        ..Default::default()
     };
 
     // 2. Open the CF-aware store
@@ -201,7 +212,7 @@ RockSolid provides CF-aware transactional stores.
 
 ```rust
 use rocksolid::{RocksDbTxnStore, tx::tx_store::RocksDbTxnStoreConfig, StoreResult, StoreError};
-use rocksolid::store::DefaultCFOperations; // For store.set, store.get on committed state
+use rocksolid::store::DefaultCFOperations; // For store.put, store.get on committed state
 use serde::{Serialize, Deserialize};
 use tempfile::tempdir;
 
@@ -236,7 +247,7 @@ fn main() -> StoreResult<()> {
     let config = RocksDbTxnStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
-        // ..other fields if needed, or rely on their defaults from the struct
+        ..Default::default()
     };
 
     let txn_store = RocksDbTxnStore::open(config)?;
@@ -297,7 +308,7 @@ fn main() -> StoreResult<()> {
             CUSTOMERS_CF.to_string(),
         ],
         column_family_configs: cf_configs,
-        // ..other fields if needed, or rely on their defaults from the struct
+        ..Default::default()
     };
     let cf_txn_store = RocksDbCFTxnStore::open(config)?;
     let dummy_customer_data = "Updated Customer Data".to_string();
@@ -329,7 +340,7 @@ struct SimpleSet(HashSet<String>);
 // Example merge function. Operands for custom merge operators are raw byte slices.
 // The application logic defines how these bytes are interpreted (e.g., as serialized MergeValue<SimpleSet>).
 fn set_union_full_handler(
-  _key: &[u8], existing_val_bytes: Option<&[u8]>, operands: &MergeOperands, _params: &matchit::Params
+  _key: &[u8], existing_val_bytes: Option<&[u8]>, operands: &MergeOperands, _params: &matchit::Params // For MergeRouterBuilder
 ) -> Option<Vec<u8>> {
   let mut current_set: HashSet<String> = existing_val_bytes
       .and_then(|v_bytes| rocksolid::deserialize_value::<SimpleSet>(v_bytes).ok()) // Existing value is SimpleSet
@@ -367,7 +378,7 @@ fn main() -> StoreResult<()> {
         create_if_missing: true,
         column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), SETS_CF.to_string()],
         column_family_configs: cf_configs,
-        // ..other fields if needed
+        ..Default::default()
     };
     let store = RocksDbCFStore::open(config)?;
 
@@ -385,6 +396,7 @@ fn main() -> StoreResult<()> {
     Ok(())
 }
 ```
+**Warning on `MergeRouterBuilder`**: The router functions created by `MergeRouterBuilder` (i.e., `router_full_merge_fn`, `router_partial_merge_fn`) use **globally shared static routers**. This means if you register a merge operator name (e.g., "MyRouter") derived from a `MergeRouterBuilder`, all Column Families (even across different database instances in the same process) that use this "MyRouter" name will share the same routing rules. If your route patterns (e.g., `/lists/{id}`) are generic, ensure your actual keys within different CFs are sufficiently unique (e.g., prefixed like `/cf1_lists/{id}`, `/cf2_lists/{id}`) to avoid unintended routing conflicts if those CFs share the same routed merge operator.
 
 ## Key/Value Expiry Hints ⏱️ (CF-Aware)
 
@@ -418,7 +430,7 @@ fn main() -> StoreResult<()> {
         create_if_missing: true,
         column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), SESSIONS_CF.to_string()],
         column_family_configs: cf_configs,
-        // ..other fields if needed
+        ..Default::default()
     };
     let store = RocksDbCFStore::open(config)?;
 
@@ -443,13 +455,14 @@ fn main() -> StoreResult<()> {
 
 ## Configuration Structures ⚙️
 
-*   **`RocksDbCFStoreConfig`**: For `RocksDbCFStore` (non-transactional). Allows DB-wide and per-CF tuning, merge operators. Uses `BaseCfConfig` for per-CF settings.
-*   **`RocksDbStoreConfig`**: For `RocksDbStore` (non-transactional). Simplified for default CF, with options for default CF's tuning and merge operator, plus DB-wide hard settings.
+*   **`RocksDbCFStoreConfig`**: For `RocksDbCFStore` (non-transactional). Allows DB-wide and per-CF tuning, merge operators, and comparators. Uses `BaseCfConfig` for per-CF settings.
+*   **`RocksDbStoreConfig`**: For `RocksDbStore` (non-transactional). Simplified for default CF, with options for default CF's tuning, merge operator, comparator, plus DB-wide hard settings.
 *   **`RocksDbCFTxnStoreConfig`**: For `RocksDbCFTxnStore` (transactional). Similar to `RocksDbCFStoreConfig` but uses `CFTxConfig` (which wraps `BaseCfConfig`) and includes `TransactionDBOptions`.
-*   **`RocksDbTxnStoreConfig`**: For `RocksDbTxnStore` (transactional). Simplified for default CF, includes `TransactionDBOptions`.
-*   **`BaseCfConfig`**: Per-CF settings (`tuning_profile`, `merge_operator: Option<RockSolidMergeOperatorCfConfig>`) used within non-transactional CF configs and wrapped by `CFTxConfig`.
+*   **`RocksDbTxnStoreConfig`**: For `RocksDbTxnStore` (transactional). Simplified for default CF, includes `TransactionDBOptions`. (Note: direct comparator setting is not on this struct; it's applied via conversion to `BaseCfConfig` if needed, or through custom options).
+*   **`BaseCfConfig`**: Per-CF settings (`tuning_profile`, `merge_operator: Option<RockSolidMergeOperatorCfConfig>`, `comparator: Option<RockSolidComparatorOpt>`) used within non-transactional CF configs and wrapped by `CFTxConfig`.
 *   **`CFTxConfig`**: Per-CF settings for transactional stores, wraps `BaseCfConfig`.
 *   **`TuningProfile`**: (From `rocksolid::tuner`) Enum for pre-defined option sets.
+*   **`RockSolidComparatorOpt`**: (From `rocksolid::config`) Enum to specify custom key comparison (e.g., `NaturalLexicographical`, `Natural`). Requires "natlex\_sort" or "nat\_sort" features.
 *   **`RockSolidMergeOperatorCfConfig` vs `MergeOperatorConfig`**: `RockSolidMergeOperatorCfConfig` is used by `RocksDbCFStoreConfig`, `RocksDbStoreConfig`, and `BaseCfConfig`. The older `MergeOperatorConfig` (re-exported for compatibility) is used by `RocksDbTxnStoreConfig` for its `default_cf_merge_operator`.
 
 Refer to `src/config.rs`, `src/tx/cf_tx_store.rs`, and `src/tx/tx_store.rs` for detailed structures.
@@ -471,14 +484,14 @@ Key components and their CF-aware nature:
         *   Methods like `get`, `put` (auto-commit on default CF), `transaction_context()`.
 *   **`CFOperations` Trait:** Defines the interface for CF-aware data operations.
 *   **`DefaultCFOperations` Trait:** Defines the interface for default CF data operations.
-*   **`BatchWriter`** (from `RocksDbCFStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`): Non-transactional. CF-bound on creation. Methods like `set`, `delete`, etc., operate on its bound CF. Use `raw_batch_mut()` for multi-CF atomicity.
+*   **`BatchWriter`** (from `RocksDbCFStore::batch_writer(cf_name)` or `RocksDbStore::batch_writer()`): Non-transactional. CF-bound on creation for high-level methods. Methods like `set`, `delete`, etc., operate on its bound CF. Use `raw_batch_mut()` for multi-CF atomicity.
 *   **`TransactionContext`** (from `RocksDbTxnStore::transaction_context()`): Manages a transaction on the default CF.
 *   **`Tx<'a>`** (from `store.begin_transaction()`): Raw `rocksdb::Transaction` object.
 *   **Configuration:** As detailed above.
 *   **Macros:**
     *   Default CF macros (e.g., `generate_dao_get!`) work with stores implementing `DefaultCFOperations`.
     *   CF-Aware macros (e.g., `generate_dao_get_cf!`) work with stores implementing `CFOperations` and take a `cf_name`.
-    *   Transactional macros (e.g., `generate_dao_set_in_txn!`) defined in `macros.rs` attempt to call static methods on `RocksDbTxnStore`. For general transactional ops: use `TransactionContext` methods (default CF), `RocksDbCFTxnStore`'s `_in_txn_cf` methods, or methods directly on a `Tx` object.
+    *   Transactional macros (e.g., `generate_dao_merge_in_txn!`, `generate_dao_remove_in_txn!`) are available. Note that `generate_dao_put_in_txn!` and `generate_dao_put_with_expiry_in_txn!` currently rely on static helper functions that are not defined in the `rocksolid::tx` module; for these operations, use `TransactionContext` or direct `Tx` methods.
 *   **Utilities (`utils.rs`):** `backup_db`, `migrate_db` use `RocksDbCFStoreConfig` and are CF-aware for non-transactional stores.
 
 ## Running Examples

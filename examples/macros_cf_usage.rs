@@ -1,6 +1,6 @@
 use rocksolid::cf_store::RocksDbCFStore;
 use rocksolid::config::{BaseCfConfig, RocksDbCFStoreConfig};
-use rocksolid::{generate_dao_get_cf, generate_dao_set_cf, generate_dao_remove_cf, generate_dao_exists_cf};
+use rocksolid::{generate_dao_get_cf, generate_dao_put_cf, generate_dao_remove_cf, generate_dao_exists_cf};
 use rocksolid::StoreResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,9 +25,9 @@ impl<'a> ConfigDao<'a> {
         ConfigDao { store }
     }
 
-    // Method using generate_dao_set_cf!
+    // Method using generate_dao_put_cf!
     fn set_config_item(&self, cf_name: &str, item: &ConfigItem) -> StoreResult<()> {
-        generate_dao_set_cf!(self.store, cf_name, &item.key, item)
+        generate_dao_put_cf!(self.store, cf_name, &item.key, item)
     }
 
     // Method using generate_dao_get_cf!

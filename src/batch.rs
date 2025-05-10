@@ -1,5 +1,6 @@
 // rocksolid/src/batch.rs
 
+use crate::bytes::AsBytes;
 use crate::cf_store::RocksDbCFStore;
 use crate::error::{StoreError, StoreResult};
 use crate::serialization;
@@ -56,11 +57,11 @@ impl<'a> BatchWriter<'a> {
 
   pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let sv = serialization::serialize_value(val)?;
     // self.batch is ManuallyDrop<WriteBatch>, so use *self.batch to get WriteBatch
     let current_batch = &mut *self.batch;
@@ -76,10 +77,10 @@ impl<'a> BatchWriter<'a> {
 
   pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let current_batch = &mut *self.batch;
 
     if self.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
@@ -93,11 +94,11 @@ impl<'a> BatchWriter<'a> {
 
   pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let vwe = ValueWithExpiry::from_value(expire_time, val)?;
     let sv_with_ts = vwe.serialize_for_storage();
     let current_batch = &mut *self.batch;
@@ -113,11 +114,11 @@ impl<'a> BatchWriter<'a> {
 
   pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &MergeValue<PatchVal>) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let smo = serialization::serialize_value(merge_value)?;
     let current_batch = &mut *self.batch;
 
@@ -132,10 +133,10 @@ impl<'a> BatchWriter<'a> {
 
   pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let current_batch = &mut *self.batch;
 
     if self.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
@@ -149,10 +150,10 @@ impl<'a> BatchWriter<'a> {
 
   pub fn delete<Key>(&mut self, key: Key) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_not_committed()?;
-    let sk = serialization::serialize_key(key.as_ref())?;
+    let sk = serialization::serialize_key(key)?;
     let current_batch = &mut *self.batch;
 
     if self.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
@@ -166,11 +167,11 @@ impl<'a> BatchWriter<'a> {
 
   pub fn delete_range<Key>(&mut self, start_key: Key, end_key: Key) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_not_committed()?;
-    let sks = serialization::serialize_key(start_key.as_ref())?;
-    let ske = serialization::serialize_key(end_key.as_ref())?;
+    let sks = serialization::serialize_key(start_key)?;
+    let ske = serialization::serialize_key(end_key)?;
     let current_batch = &mut *self.batch;
 
     if self.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {

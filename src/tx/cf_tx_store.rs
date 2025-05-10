@@ -2,9 +2,9 @@
 
 //! Provides the core CF-aware transactional store, `RocksDbCFTxnStore`.
 
+use crate::bytes::AsBytes;
 use crate::config::{
   convert_recovery_mode, default_full_merge, default_partial_merge, BaseCfConfig, RecoveryMode,
-  RockSolidMergeOperatorCfConfig as RockSolidMergeOperatorConfig,
 };
 use crate::error::{StoreError, StoreResult};
 use crate::iter::{ControlledIter, IterConfig};
@@ -19,12 +19,10 @@ use rocksdb::{
   Direction,
   IteratorMode,
   Options as RocksDbOptions,
-  ReadOptions,
   Transaction,
   TransactionDB,
   TransactionDBOptions,
   TransactionOptions,
-  WriteBatchWithTransaction,
   WriteOptions as RocksDbWriteOptions,
   DB as StandardDB, // For destroy
 };
@@ -277,10 +275,10 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn get<K, V>(&self, cf_name: &str, key: K) -> StoreResult<Option<V>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: DeserializeOwned + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let opt_bytes = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.get_pinned(&ser_key)?
     } else {
@@ -292,9 +290,9 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn get_raw<K>(&self, cf_name: &str, key: K) -> StoreResult<Option<Vec<u8>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.get_pinned(&ser_key).map(|opt| opt.map(|p| p.to_vec()))
     } else {
@@ -309,7 +307,7 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn get_with_expiry<K, V>(&self, cf_name: &str, key: K) -> StoreResult<Option<ValueWithExpiry<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     self
@@ -319,9 +317,9 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn exists<K>(&self, cf_name: &str, key: K) -> StoreResult<bool>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.get_pinned(&ser_key).map(|opt| opt.is_some())
     } else {
@@ -333,7 +331,7 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn multiget<K, V>(&self, cf_name: &str, keys: &[K]) -> StoreResult<Vec<Option<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone,
     V: DeserializeOwned + Debug,
   {
     if keys.is_empty() {
@@ -341,7 +339,7 @@ impl CFOperations for RocksDbCFTxnStore {
     }
     let ser_keys: Vec<_> = keys
       .iter()
-      .map(|k| serialize_key(k.as_ref()))
+      .map(|k| serialize_key(k))
       .collect::<StoreResult<_>>()?;
 
     let results_from_db = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
@@ -364,14 +362,14 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn multiget_raw<K>(&self, cf_name: &str, keys: &[K]) -> StoreResult<Vec<Option<Vec<u8>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     if keys.is_empty() {
       return Ok(Vec::new());
     }
     let ser_keys: Vec<_> = keys
       .iter()
-      .map(|k| serialize_key(k.as_ref()))
+      .map(|k| serialize_key(k))
       .collect::<StoreResult<_>>()?;
 
     let results_from_db = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
@@ -390,7 +388,7 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn multiget_with_expiry<K, V>(&self, cf_name: &str, keys: &[K]) -> StoreResult<Vec<Option<ValueWithExpiry<V>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone,
     V: Serialize + DeserializeOwned + Debug,
   {
     let raw_results = self.multiget_raw(cf_name, keys)?;
@@ -408,12 +406,12 @@ impl CFOperations for RocksDbCFTxnStore {
     cfg: IterConfig<Key, Val>,
   ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
     Val: DeserializeOwned + Debug + 'a,
   {
     // serialize prefix & start
-    let ser_prefix = cfg.prefix.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
-    let ser_start = cfg.start.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let ser_prefix = cfg.prefix.as_ref().map(|k| serialize_key(k)).transpose()?;
+    let ser_start = cfg.start.as_ref().map(|k| serialize_key(k)).transpose()?;
     let dir = if cfg.reverse {
       rocksdb::Direction::Reverse
     } else {
@@ -457,10 +455,10 @@ impl CFOperations for RocksDbCFTxnStore {
   /// Core method: iterate with control only, no collection
   fn iterate_cf_control<Key>(&self, prefix: Option<Key>, start: Option<Key>, mut cfg: IterConfig<(), ()>) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
   {
-    let ser_prefix = prefix.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
-    let ser_start = start.as_ref().map(|k| serialize_key(k.as_ref())).transpose()?;
+    let ser_prefix = prefix.as_ref().map(|k| serialize_key(k)).transpose()?;
+    let ser_start = start.as_ref().map(|k| serialize_key(k)).transpose()?;
     let dir = if cfg.reverse {
       rocksdb::Direction::Reverse
     } else {
@@ -510,7 +508,7 @@ impl CFOperations for RocksDbCFTxnStore {
     mut control_fn: F,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
   {
     let cfg = IterConfig::new(cf_name, |_k, _v| Ok(((), ())))
@@ -527,7 +525,7 @@ impl CFOperations for RocksDbCFTxnStore {
     mut control_fn: F,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
   {
     let cfg = IterConfig::new(cf_name, |_k, _v| Ok(((), ())))
@@ -538,7 +536,7 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn find_by_prefix<Key, Val>(&self, cf_name: &str, prefix: &Key, direction: Direction) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
   {
     let cfg = IterConfig::new(cf_name, |k, v| deserialize_kv(k, v))
@@ -556,7 +554,7 @@ impl CFOperations for RocksDbCFTxnStore {
     control_fn: F,
   ) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
     F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
@@ -575,7 +573,7 @@ impl CFOperations for RocksDbCFTxnStore {
     control_fn: F,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
@@ -599,7 +597,7 @@ impl CFOperations for RocksDbCFTxnStore {
     control_fn: F,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
@@ -617,10 +615,10 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn put<K, V>(&self, cf_name: &str, key: K, value: &V) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let ser_val = serialize_value(value)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.put(&ser_key, &ser_val)
@@ -633,9 +631,9 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn put_raw<K>(&self, cf_name: &str, key: K, raw_value: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.put(&ser_key, raw_value)
     } else {
@@ -647,7 +645,7 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn put_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     let vwe = ValueWithExpiry::from_value(expire_time, value)?;
@@ -656,9 +654,9 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn delete<K>(&self, cf_name: &str, key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.delete(&ser_key)
     } else {
@@ -672,17 +670,17 @@ impl CFOperations for RocksDbCFTxnStore {
   #[warn(unused)]
   fn delete_range<K>(&self, _cf_name: &str, _start_key: K, _end_key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     unimplemented!()
   }
 
   fn merge<K, PatchVal>(&self, cf_name: &str, key: K, merge_value: &MergeValue<PatchVal>) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let ser_merge_op = serialize_value(merge_value)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.merge(&ser_key, &ser_merge_op)
@@ -695,9 +693,9 @@ impl CFOperations for RocksDbCFTxnStore {
 
   fn merge_raw<K>(&self, cf_name: &str, key: K, raw_merge_operand: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       self.db.merge(&ser_key, raw_merge_operand)
     } else {
@@ -719,10 +717,10 @@ impl RocksDbCFTxnStore {
     key: K,
   ) -> StoreResult<Option<V>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: DeserializeOwned + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let opt_bytes = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.get_pinned(ser_key)?
     } else {
@@ -739,9 +737,9 @@ impl RocksDbCFTxnStore {
     key: K,
   ) -> StoreResult<Option<Vec<u8>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let res = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.get_pinned(ser_key)
     } else {
@@ -758,7 +756,7 @@ impl RocksDbCFTxnStore {
     key: K,
   ) -> StoreResult<Option<ValueWithExpiry<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     self
@@ -773,9 +771,9 @@ impl RocksDbCFTxnStore {
     key: K,
   ) -> StoreResult<bool>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let res = if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.get_pinned(ser_key)
     } else {
@@ -793,10 +791,10 @@ impl RocksDbCFTxnStore {
     value: &V,
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let ser_val = serialize_value(value)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.put(ser_key, ser_val)
@@ -815,9 +813,9 @@ impl RocksDbCFTxnStore {
     raw_value: &[u8],
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.put(ser_key, raw_value)
     } else {
@@ -836,7 +834,7 @@ impl RocksDbCFTxnStore {
     expire_time: u64,
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     let vwe = ValueWithExpiry::from_value(expire_time, value)?;
@@ -850,9 +848,9 @@ impl RocksDbCFTxnStore {
     key: K,
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.delete(ser_key)
     } else {
@@ -870,10 +868,10 @@ impl RocksDbCFTxnStore {
     merge_value: &MergeValue<PatchVal>,
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     let ser_merge_op = serialize_value(merge_value)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.merge(ser_key, ser_merge_op)
@@ -892,9 +890,9 @@ impl RocksDbCFTxnStore {
     raw_merge_operand: &[u8],
   ) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
-    let ser_key = serialize_key(key.as_ref())?;
+    let ser_key = serialize_key(key)?;
     if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
       txn.merge(ser_key, raw_merge_operand)
     } else {

@@ -9,6 +9,7 @@ use bytevec::ByteDecodable;
 use rocksdb::{Direction, WriteBatch, DEFAULT_COLUMN_FAMILY_NAME};
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::bytes::AsBytes;
 // --- Local Module Imports ---
 use crate::cf_store::{CFOperations, RocksDbCFStore}; // RocksDbCFStore and its trait
 use crate::config::{RocksDbCFStoreConfig, RocksDbStoreConfig}; // New config structs
@@ -21,68 +22,68 @@ pub trait DefaultCFOperations {
   // --- Read Operations ---
   fn get<K, V>(&self, key: K) -> StoreResult<Option<V>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: DeserializeOwned + Debug;
 
   fn get_raw<K>(&self, key: K) -> StoreResult<Option<Vec<u8>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   fn get_with_expiry<K, V>(&self, key: K) -> StoreResult<Option<ValueWithExpiry<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug;
 
   fn exists<K>(&self, key: K) -> StoreResult<bool>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   // --- Multi Get Operations ---
   fn multiget<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone, // Clone for processing keys with results
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone, // Clone for processing keys with results
     V: DeserializeOwned + Debug;
 
   fn multiget_raw<K>(&self, keys: &[K]) -> StoreResult<Vec<Option<Vec<u8>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   fn multiget_with_expiry<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<ValueWithExpiry<V>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone,
     V: Serialize + DeserializeOwned + Debug;
 
   // --- Write Operations ---
   fn put<K, V>(&self, key: K, value: &V) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + Debug;
 
   fn put_raw<K>(&self, key: K, raw_value: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   fn put_with_expiry<K, V>(&self, key: K, value: &V, expire_time: u64) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug;
 
   fn delete<K>(&self, key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   fn delete_range<K>(&self, start_key: K, end_key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   fn merge<K, PatchVal>(&self, key: K, merge_value: &MergeValue<PatchVal>) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug;
 
   fn merge_raw<K>(&self, key: K, raw_merge_operand: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug;
+    K: AsBytes + Hash + Eq + PartialEq + Debug;
 
   // --- Iterator / Find Operations ---
   fn iterate_cf<'a, Key, Val>(
@@ -90,7 +91,7 @@ pub trait DefaultCFOperations {
     cfg: IterConfig<Key, Val>,
   ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
     Val: DeserializeOwned + Debug + 'a;
 
   fn iterate_cf_control<Key>(
@@ -100,7 +101,7 @@ pub trait DefaultCFOperations {
     cfg: IterConfig<(), ()>,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug;
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug;
 
   fn iterate_by_prefix_control<Key, F>(
     &self,
@@ -109,17 +110,17 @@ pub trait DefaultCFOperations {
     control_fn: F,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static;
 
   fn iterate_from_control<Key, F>(&self, start_key: Key, direction: Direction, control_fn: F) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static;
 
   fn find_by_prefix<Key, Val>(&self, prefix: &Key, direction: Direction) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug;
 
   fn find_from<Key, Val, ControlFn>(
@@ -129,7 +130,7 @@ pub trait DefaultCFOperations {
     control_fn: ControlFn,
   ) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
     ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static;
 
@@ -140,7 +141,7 @@ pub trait DefaultCFOperations {
     control_fn: ControlFn,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static;
 
@@ -151,7 +152,7 @@ pub trait DefaultCFOperations {
     control_fn: ControlFn,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static;
 }
@@ -255,7 +256,7 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn get<K, V>(&self, key: K) -> StoreResult<Option<V>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: DeserializeOwned + Debug,
   {
     self.cf_store.get(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
@@ -263,14 +264,14 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn get_raw<K>(&self, key: K) -> StoreResult<Option<Vec<u8>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.get_raw(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
   }
 
   fn get_with_expiry<Key, Val>(&self, key: Key) -> StoreResult<Option<ValueWithExpiry<Val>>>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.cf_store.get_with_expiry(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
@@ -278,7 +279,7 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn exists<K>(&self, key: K) -> StoreResult<bool>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.exists(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
   }
@@ -286,7 +287,7 @@ impl DefaultCFOperations for RocksDbStore {
   // --- Multi Get Operations ---
   fn multiget<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<V>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone,
     V: DeserializeOwned + Debug,
   {
     self.cf_store.multiget(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, keys)
@@ -294,14 +295,14 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn multiget_raw<K>(&self, keys: &[K]) -> StoreResult<Vec<Option<Vec<u8>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.multiget_raw(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, keys)
   }
 
   fn multiget_with_expiry<K, V>(&self, keys: &[K]) -> StoreResult<Vec<Option<ValueWithExpiry<V>>>>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug + Clone,
+    K: AsBytes + Hash + Eq + PartialEq + Debug + Clone,
     V: Serialize + DeserializeOwned + Debug,
   {
     self
@@ -312,7 +313,7 @@ impl DefaultCFOperations for RocksDbStore {
   // --- Write Operations ---
   fn put<K, V>(&self, key: K, val: &V) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + Debug,
   {
     self.cf_store.put(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key, val)
@@ -320,14 +321,14 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn put_raw<K>(&self, key: K, raw_val: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.put_raw(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key, raw_val)
   }
 
   fn put_with_expiry<K, V>(&self, key: K, val: &V, expire_time: u64) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     V: Serialize + DeserializeOwned + Debug,
   {
     self
@@ -337,7 +338,7 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn merge<K, PatchVal>(&self, key: K, merge_value: &MergeValue<PatchVal>) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
   {
     self
@@ -347,7 +348,7 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn merge_raw<K>(&self, key: K, raw_merge_op: &[u8]) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self
       .cf_store
@@ -356,14 +357,14 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn delete<K>(&self, key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.delete(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key)
   }
 
   fn delete_range<K>(&self, start_key: K, end_key: K) -> StoreResult<()>
   where
-    K: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self
       .cf_store
@@ -373,7 +374,7 @@ impl DefaultCFOperations for RocksDbStore {
   // --- Iterator / Find Operations ---
   fn find_by_prefix<Key, Val>(&self, prefix: &Key, direction: rocksdb::Direction) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
   {
     self
@@ -388,7 +389,7 @@ impl DefaultCFOperations for RocksDbStore {
     control_fn: F,
   ) -> StoreResult<Vec<(Key, Val)>>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
     F: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
@@ -402,7 +403,7 @@ impl DefaultCFOperations for RocksDbStore {
     cfg: IterConfig<Key, Val>,
   ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
     Val: DeserializeOwned + Debug + 'a,
   {
     self.cf_store.iterate_cf(cfg)
@@ -415,7 +416,7 @@ impl DefaultCFOperations for RocksDbStore {
     cfg: IterConfig<(), ()>,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
   {
     self.cf_store.iterate_cf_control(prefix, start, cfg)
   }
@@ -427,7 +428,7 @@ impl DefaultCFOperations for RocksDbStore {
     control_fn: F,
   ) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
   {
     self.cf_store.iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
@@ -435,7 +436,7 @@ impl DefaultCFOperations for RocksDbStore {
 
   fn iterate_from_control<Key, F>(&self, start_key: Key, direction: Direction, control_fn: F) -> Result<(), StoreError>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
   {
     self.cf_store.iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
@@ -448,7 +449,7 @@ impl DefaultCFOperations for RocksDbStore {
     control_fn: ControlFn,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {
@@ -462,7 +463,7 @@ impl DefaultCFOperations for RocksDbStore {
     control_fn: ControlFn,
   ) -> Result<Vec<(Key, ValueWithExpiry<Val>)>, String>
   where
-    Key: ByteDecodable + AsRef<[u8]> + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
+    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
     Val: DeserializeOwned + Debug,
     ControlFn: FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'static,
   {

@@ -1,15 +1,18 @@
+use std::fmt::Debug;
+
 use crate::config::{default_full_merge, default_partial_merge}; // Import defaults
 use crate::error::{StoreError, StoreResult};
+use crate::{deserialize_value, MergeValue, ValueWithExpiry};
 use matchit::{Params, Router};
-use once_cell::sync::Lazy; // Import Lazy
-use parking_lot::Mutex; // Use Mutex for thread-safe mutation of statics
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
+use rocksdb::merge_operator::MergeOperandsIter;
 use rocksdb::MergeOperands;
-// Keep import if used elsewhere, not strictly needed now
 
-static FULL_MERGE_ROUTER: Lazy<Mutex<Router<MergeRouteHandlerFn>>> =
-  Lazy::new(|| Mutex::new(Router::new()));
-static PARTIAL_MERGE_ROUTER: Lazy<Mutex<Router<MergeRouteHandlerFn>>> =
-  Lazy::new(|| Mutex::new(Router::new()));
+static FULL_MERGE_ROUTER: Lazy<RwLock<Router<MergeRouteHandlerFn>>> =
+  Lazy::new(|| RwLock::new(Router::new()));
+static PARTIAL_MERGE_ROUTER: Lazy<RwLock<Router<MergeRouteHandlerFn>>> =
+  Lazy::new(|| RwLock::new(Router::new()));
 
 /// Signature for handler functions used by the merge router.
 /// Receives the key, existing value (for full merge), operands, and matched route parameters.
@@ -23,8 +26,6 @@ pub type MergeRouteHandlerFn = fn(
 /// Builds routing tables for full and partial merge operations based on key patterns.
 #[derive(Default)]
 pub struct MergeRouterBuilder {
-  full_merge_routes: Router<MergeRouteHandlerFn>,
-  partial_merge_routes: Router<MergeRouteHandlerFn>,
   operator_name: Option<String>,
   // Track if routes were added to ensure build isn't called trivially
   routes_added: bool,
@@ -48,7 +49,7 @@ impl MergeRouterBuilder {
     handler: MergeRouteHandlerFn,
   ) -> StoreResult<&mut Self> {
     // Lock and modify the static router
-    let mut router_guard = FULL_MERGE_ROUTER.lock();
+    let mut router_guard = FULL_MERGE_ROUTER.write();
     router_guard.insert(route_pattern, handler).map_err(|e| {
       StoreError::InvalidConfiguration(format!(
         "Invalid full merge route pattern '{}': {}",
@@ -67,7 +68,7 @@ impl MergeRouterBuilder {
     handler: MergeRouteHandlerFn,
   ) -> StoreResult<&mut Self> {
     // Lock and modify the static router
-    let mut router_guard = PARTIAL_MERGE_ROUTER.lock();
+    let mut router_guard = PARTIAL_MERGE_ROUTER.write();
     router_guard.insert(route_pattern, handler).map_err(|e| {
       StoreError::InvalidConfiguration(format!(
         "Invalid partial merge route pattern '{}': {}",
@@ -84,31 +85,15 @@ impl MergeRouterBuilder {
   pub fn add_route(
     &mut self,
     route_pattern: &str,
-    full_merge_handler: Option<MergeRouteHandlerFn>,
-    partial_merge_handler: Option<MergeRouteHandlerFn>,
+    mut full_merge_handler: Option<MergeRouteHandlerFn>,
+    mut partial_merge_handler: Option<MergeRouteHandlerFn>,
   ) -> StoreResult<&mut Self> {
-    if let Some(handler) = full_merge_handler {
-      let mut router_guard = FULL_MERGE_ROUTER.lock();
-      if let Err(e) = router_guard.insert(route_pattern, handler) {
-        return Err(StoreError::InvalidConfiguration(format!(
-          "Invalid full merge route pattern '{}': {}",
-          route_pattern, e
-        )));
-      }
-      drop(router_guard);
-      self.routes_added = true;
+    if let Some(handler) = full_merge_handler.take() {
+      self.add_full_merge_route(route_pattern, handler)?;
     }
 
-    if let Some(handler) = partial_merge_handler {
-      let mut router_guard = PARTIAL_MERGE_ROUTER.lock();
-      if let Err(e) = router_guard.insert(route_pattern, handler) {
-        return Err(StoreError::InvalidConfiguration(format!(
-          "Invalid partial merge route pattern '{}': {}",
-          route_pattern, e
-        )));
-      }
-      drop(router_guard);
-      self.routes_added = true;
+    if let Some(handler) = partial_merge_handler.take() {
+      self.add_partial_merge_route(route_pattern, handler)?;
     }
     Ok(self)
   }
@@ -145,11 +130,11 @@ fn router_full_merge_fn(
   existing_val_opt: Option<&[u8]>,
   operands: &MergeOperands,
 ) -> Option<Vec<u8>> {
-  match std::str::from_utf8(key_bytes) {
+  match String::from_utf8(key_bytes.to_vec()) {
     Ok(key_str) => {
       // Lock the static router to perform lookup
-      let router_guard = FULL_MERGE_ROUTER.lock();
-      if let Ok(match_result) = router_guard.at(key_str) {
+      let router_guard = FULL_MERGE_ROUTER.read();
+      if let Ok(match_result) = router_guard.at(&key_str) {
         let handler = *match_result.value; // Get the fn pointer
         (handler)(key_bytes, existing_val_opt, operands, &match_result.params)
       } else {
@@ -168,25 +153,78 @@ fn router_full_merge_fn(
 /// The partial merge function registered with RocksDB. Accesses static router.
 fn router_partial_merge_fn(
   key_bytes: &[u8],
-  _existing_val_opt: Option<&[u8]>,
+  existing_val_opt: Option<&[u8]>,
   operands: &MergeOperands,
 ) -> Option<Vec<u8>> {
   match std::str::from_utf8(key_bytes) {
     Ok(key_str) => {
       // Lock the static router to perform lookup
-      let router_guard = PARTIAL_MERGE_ROUTER.lock();
+      let router_guard = PARTIAL_MERGE_ROUTER.read();
       if let Ok(match_result) = router_guard.at(key_str) {
         let handler = *match_result.value; // Get the fn pointer
-        (handler)(key_bytes, None, operands, &match_result.params)
+        (handler)(key_bytes, existing_val_opt, operands, &match_result.params)
       } else {
         // No route matched, apply default
         drop(router_guard); // Release lock
-        default_partial_merge(key_bytes, None, operands)
+        default_partial_merge(key_bytes, existing_val_opt, operands)
       }
     }
     Err(_) => {
       log::warn!("Merge key is not valid UTF-8, cannot route. Applying default partial merge.");
-      default_partial_merge(key_bytes, None, operands)
+      default_partial_merge(key_bytes, existing_val_opt, operands)
     }
   }
+}
+
+
+/// Verifies that all merge values operations are the same and returns all merge values or else none
+pub fn validate_mergevalues_associativity<Val>(mut operands_iter: MergeOperandsIter) -> StoreResult<Vec<MergeValue<Val>>>
+where Val: serde::de::DeserializeOwned + Debug {
+
+  let l_op = operands_iter.next().unwrap();
+  let merge_lvalue: MergeValue<Val> = deserialize_value(l_op)?;
+
+  let merge_lvalue_op = merge_lvalue.0.clone();
+  let mut merge_values = vec![merge_lvalue];
+
+  for bytes in operands_iter {
+
+    let merge_rvalue: MergeValue<Val> = deserialize_value(bytes)?;
+
+    if merge_lvalue_op != merge_rvalue.0 {
+      return Err(StoreError::MergeError("merge lvalue != merge rvalue".to_string()));
+    }
+
+    merge_values.push(merge_rvalue);
+  }
+
+  return Ok(merge_values);
+}
+
+/// Verifies that all expirable merge values operations are the same and returns all merge values or else none
+pub fn validate_expirable_mergevalues_associativity<Val>(mut operands_iter: MergeOperandsIter) -> StoreResult<(Vec<MergeValue<Val>>, u64)>
+where Val: serde::de::DeserializeOwned + Debug {
+
+  let l_op = ValueWithExpiry::from(operands_iter.next().unwrap());
+  let mut expire_time = l_op.expire_time;
+  let merge_lvalue: MergeValue<Val> = l_op.get()?;
+  let merge_lvalue_op = merge_lvalue.0.clone();
+  let mut merge_values = vec![merge_lvalue];
+
+  for bytes in operands_iter {
+
+    let r_op = ValueWithExpiry::from(bytes);
+    let merge_rvalue: MergeValue<Val> = r_op.get()?;
+    if expire_time < r_op.expire_time {
+      expire_time = r_op.expire_time;
+    }
+    
+    if merge_lvalue_op != merge_rvalue.0 {
+      return Err(StoreError::MergeError("merge lvalue != merge rvalue".to_string()));
+    }
+
+    merge_values.push(merge_rvalue);
+  }
+
+  return Ok((merge_values, expire_time));
 }

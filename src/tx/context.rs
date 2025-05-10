@@ -3,7 +3,8 @@
 //! Provides the `TransactionContext` struct for managing operations within a single pessimistic transaction,
 //! primarily focused on the default Column Family.
 
-use super::cf_tx_store::RocksDbCFTxnStore; // The CF-aware transactional store base
+use super::cf_tx_store::RocksDbCFTxnStore; use crate::bytes::AsBytes;
+// The CF-aware transactional store base
 use crate::error::{StoreError, StoreResult};
 use crate::serialization; // For key/value serialization helpers
 use crate::types::{MergeValue, ValueWithExpiry};
@@ -72,7 +73,7 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'set' (put) operation on the default CF within the transaction.
   pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + Debug,
   {
     self.check_completed()?;
@@ -85,14 +86,14 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'set' (put) operation with a raw byte value on the default CF within the transaction.
   pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need a put_raw_in_txn_cf method
     // For now, assuming it exists or put_in_txn_cf handles raw via a generic type.
     // Let's assume put_in_txn_cf serializes, so we'd need a specific raw method on store.
     // To implement directly here for now:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     self.txn.put(ser_key, raw_val).map_err(StoreError::RocksDb)?; // Directly on default CF
     Ok(self)
   }
@@ -100,13 +101,13 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'set' (put) operation with an expiry time on the default CF within the transaction.
   pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need a put_with_expiry_in_txn_cf method
     // For now, direct implementation:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     let vwe = ValueWithExpiry::from_value(expire_time, val)?;
     self
       .txn
@@ -118,13 +119,13 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'merge' operation on the default CF within the transaction.
   pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &MergeValue<PatchVal>) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need merge_in_txn_cf
     // For now, direct:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     let ser_merge_op = serialization::serialize_value(merge_value)?;
     self.txn.merge(ser_key, ser_merge_op).map_err(StoreError::RocksDb)?;
     Ok(self)
@@ -133,10 +134,10 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'merge' operation with a raw byte merge operand on the default CF.
   pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     self.txn.merge(ser_key, raw_merge_op).map_err(StoreError::RocksDb)?;
     Ok(self)
   }
@@ -144,12 +145,12 @@ impl<'store> TransactionContext<'store> {
   /// Stages a 'delete' operation on the default CF within the transaction.
   pub fn delete<Key>(&mut self, key: Key) -> StoreResult<&mut Self>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need delete_in_txn_cf
     // For now, direct:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     self.txn.delete(ser_key).map_err(StoreError::RocksDb)?;
     Ok(self)
   }
@@ -159,7 +160,7 @@ impl<'store> TransactionContext<'store> {
   /// Gets a deserialized value for the given key from the default CF *within the transaction*.
   pub fn get<Key, Val>(&self, key: Key) -> StoreResult<Option<Val>>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: DeserializeOwned + Debug,
   {
     self.check_completed()?;
@@ -171,12 +172,12 @@ impl<'store> TransactionContext<'store> {
   /// Gets the raw byte value for the given key from the default CF *within the transaction*.
   pub fn get_raw<Key>(&self, key: Key) -> StoreResult<Option<Vec<u8>>>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need get_raw_in_txn_cf
     // For now, direct:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     match self.txn.get_pinned(ser_key)? {
       Some(pinned_val) => Ok(Some(pinned_val.to_vec())),
       None => Ok(None),
@@ -186,7 +187,7 @@ impl<'store> TransactionContext<'store> {
   /// Gets a deserialized value with expiry time from the default CF *within the transaction*.
   pub fn get_with_expiry<Key, Val>(&self, key: Key) -> StoreResult<Option<ValueWithExpiry<Val>>>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
   {
     self.check_completed()?;
@@ -199,12 +200,12 @@ impl<'store> TransactionContext<'store> {
   /// Checks if a key exists in the default CF *within the transaction*.
   pub fn exists<Key>(&self, key: Key) -> StoreResult<bool>
   where
-    Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+    Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
     self.check_completed()?;
     // RocksDbCFTxnStore would need exists_in_txn_cf
     // For now, direct:
-    let ser_key = serialization::serialize_key(key.as_ref())?;
+    let ser_key = serialization::serialize_key(key)?;
     match self.txn.get_pinned(ser_key)? {
       Some(_) => Ok(true),
       None => Ok(false),

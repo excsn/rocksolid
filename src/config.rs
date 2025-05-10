@@ -76,16 +76,39 @@ pub type ComparatorCallback = Box<dyn Fn(&[u8], &[u8]) -> Ordering + Send + Sync
 pub type MergeFn =
   fn(new_key: &[u8], existing_val: Option<&[u8]>, operands: &MergeOperands) -> Option<Vec<u8>>;
 
-// Default merge functions (Original, can be shared)
+// Default merge functions
+
+/// Simple concatenation
 pub(crate) fn default_full_merge(
-  _new_key: &[u8], existing_val: Option<&[u8]>, _operands: &MergeOperands
+  _new_key: &[u8], existing_val: Option<&[u8]>, operands: &MergeOperands
 ) -> Option<Vec<u8>> {
-  existing_val.map(|v| v.to_vec())
+  let mut result_val: Vec<u8>;
+  if let Some(existing) = existing_val {
+    result_val = existing.to_vec();
+    // Apply all new operands to the existing value
+    for op in operands {
+      result_val.extend_from_slice(op); // Simple concatenation
+    }
+  } else {
+    // No existing value.
+    if operands.is_empty() {
+      // No existing value and no operands to apply.
+      return None;
+    }
+    // Initialize with the first operand and append the rest.
+    result_val = operands.iter().next().unwrap().to_vec(); // Safe since operands is not empty.
+    for op_idx in 1..operands.len() {
+      result_val.extend_from_slice(operands.iter().nth(op_idx).unwrap()); // Simple concatenation
+    }
+  }
+  Some(result_val)
 }
+
+/// This will fail the partial merge
 pub(crate) fn default_partial_merge(
-  _new_key: &[u8], _existing_val: Option<&[u8]>, operands: &MergeOperands
+  _new_key: &[u8], _existing_val: Option<&[u8]>, _operands: &MergeOperands
 ) -> Option<Vec<u8>> {
-  operands.iter().next().map(|op| op.to_vec())
+  return None;
 }
 
 /// Configuration for a single merge operator (Original Struct).
@@ -161,6 +184,98 @@ pub fn convert_recovery_mode(rm: RecoveryMode) -> RocksDbRecoveryMode {
   }
 }
 
+/// Defines a specific, non-default key comparison strategy for a Column Family.
+/// Options are only available if their corresponding features ("natlex_sort", "nat_sort") are enabled.
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub enum RockSolidComparatorOpt {
+  #[default]
+  None,
+  #[cfg(feature = "natlex_sort")]
+  /// Uses natural-lexicographical sorting. `ignore_case` controls case sensitivity.
+  /// Requires the "natlex_sort" feature.
+  NaturalLexicographical { ignore_case: bool },
+
+  #[cfg(feature = "nat_sort")]
+  /// Uses pure natural sorting (like natord). `ignore_case` controls case sensitivity.
+  /// Requires the "nat_sort" feature.
+  /// IMPORTANT: Assumes keys are valid UTF-8 if this option is used.
+  Natural { ignore_case: bool },
+}
+
+impl RockSolidComparatorOpt {
+  /// Applies this chosen comparator to the given RocksDB Options.
+  pub(crate) fn apply_to_opts(
+    &self, // Method on the enum instance itself
+    cf_name: &str, // For logging
+    opts: &mut RocksDbOptions,
+  ) {
+    match self {
+      Self::None => {},
+      #[cfg(feature = "natlex_sort")]
+      Self::NaturalLexicographical { ignore_case } => {
+        if *ignore_case {
+            // Make sure natlex_sort::... is accessible
+            opts.set_comparator(
+              "rocksolid_natlex_ci",
+              Box::new(natlex_sort::nat_lex_byte_cmp_ignore),
+            );
+            log::debug!(
+              "Applied NaturalLexicographical (case-insensitive) comparator to CF '{}'",
+              cf_name
+            );
+        } else {
+          opts.set_comparator(
+            "rocksolid_natlex_cs",
+            Box::new(natlex_sort::nat_lex_byte_cmp),
+          );
+          log::debug!(
+            "Applied NaturalLexicographical (case-sensitive) comparator to CF '{}'",
+            cf_name
+          );
+        }
+      }
+
+      #[cfg(feature = "nat_sort")]
+      Self::Natural { ignore_case } => {
+        let comparator_name = if *ignore_case {
+          "rocksolid_natural_ci"
+        } else {
+          "rocksolid_natural_cs"
+        };
+        let log_msg_sensitivity = if *ignore_case {
+          "case-insensitive"
+        } else {
+          "case-sensitive"
+        };
+        let ic = *ignore_case; // Capture for the closure
+
+        opts.set_comparator(
+          comparator_name,
+          Box::new(move |a: &[u8], b: &[u8]| {
+            let s_a = std::str::from_utf8(a).unwrap_or_else(|_| "");
+            let s_b = std::str::from_utf8(b).unwrap_or_else(|_| "");
+            if ic {
+              natord::compare_ignore_case(s_a, s_b)
+            } else {
+              natord::compare(s_a, s_b)
+            }
+          }),
+        );
+        log::debug!(
+          "Applied Natural ({}) comparator to CF '{}'. WARNING: Assumes UTF-8 keys.",
+          log_msg_sensitivity,
+          cf_name
+        );
+      }
+      // No other variants if all are feature gated and covered above.
+      // If RockSolidComparatorOpt could be empty due to no features,
+      // and this method was somehow called, it would be a compile error unless
+      // the method itself was also feature-gated to only exist if the enum is non-empty.
+      // However, if the enum is non-empty, all variants must be handled or compiler warns.
+    }
+  }
+}
+
 // --- SECTION 2: New CF-Aware Configuration Structures ---
 
 /// Configuration for a single merge operator (New Struct, for new configs).
@@ -197,7 +312,8 @@ impl From<MergeOperatorConfig> for RockSolidMergeOperatorCfConfig {
 #[derive(Clone, Debug, Default)]
 pub struct BaseCfConfig {
   pub tuning_profile: Option<TuningProfile>,
-  pub merge_operator: Option<RockSolidMergeOperatorCfConfig>, // Uses new merge config struct
+  pub merge_operator: Option<RockSolidMergeOperatorCfConfig>,
+  pub comparator: Option<RockSolidComparatorOpt>,
 }
 
 /// Configuration for `RocksDbCFStore` (non-transactional, CF-aware store).
@@ -254,7 +370,8 @@ pub struct RocksDbStoreConfig {
   pub path: String,
   pub create_if_missing: bool,
   pub default_cf_tuning_profile: Option<TuningProfile>,
-  pub default_cf_merge_operator: Option<RockSolidMergeOperatorCfConfig>, // Uses new merge config
+  pub default_cf_merge_operator: Option<RockSolidMergeOperatorCfConfig>,
+  pub comparator: Option<RockSolidComparatorOpt>,
   pub custom_options_default_cf_and_db: Option<Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut Tunable<RocksDbOptions>) + Send + Sync + 'static>>,
   pub recovery_mode: Option<RecoveryMode>, // Shared enum
   pub parallelism: Option<i32>,
@@ -286,6 +403,7 @@ impl Default for RocksDbStoreConfig {
       recovery_mode: None,
       parallelism: None,
       enable_statistics: None,
+      comparator: None,
     }
   }
 }
@@ -296,6 +414,7 @@ impl From<RocksDbStoreConfig> for RocksDbCFStoreConfig {
     let default_cf_config = BaseCfConfig {
       tuning_profile: cfg.default_cf_tuning_profile,
       merge_operator: cfg.default_cf_merge_operator,
+      comparator: cfg.comparator,
     };
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), default_cf_config);
 

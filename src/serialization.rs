@@ -1,5 +1,6 @@
+use crate::bytes::AsBytes;
 use crate::error::{StoreError, StoreResult};
-use bytevec::{ByteDecodable, ByteEncodable};
+use bytevec::ByteDecodable;
 use rmps::{Deserializer, Serializer};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt::Debug;
@@ -10,11 +11,9 @@ use std::hash::Hash;
 #[inline]
 pub fn serialize_key<Key>(key: Key) -> StoreResult<Vec<u8>>
 where
-  Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+  Key: AsBytes + Hash + Eq + PartialEq + Debug,
 {
-  key.as_ref()
-    .encode::<u8>()
-    .map_err(|e| StoreError::KeyEncoding(e.to_string()))
+  Ok(key.as_bytes().to_vec())
 }
 
 #[inline]

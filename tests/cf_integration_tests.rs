@@ -13,12 +13,12 @@ use rocksolid::{deserialize_value, serialize_value};
 
 use rocksdb::Options as RocksDbOptions;
 use serde::{Deserialize, Serialize};
-use tempfile::TempDir;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 const DEFAULT_CF_NAME: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 
@@ -87,7 +87,7 @@ struct TestData {
 fn append_merge_operator(
   _new_key: &[u8],
   existing_val_bytes: Option<&[u8]>, // Raw bytes from DB
-  operands: &rocksdb::MergeOperands,  // Iterator over serialized MergeValue<String> operands
+  operands: &rocksdb::MergeOperands, // Iterator over serialized MergeValue<String> operands
 ) -> Option<Vec<u8>> {
   let mut current_string: String;
 
@@ -95,49 +95,55 @@ fn append_merge_operator(
     // existing_val_bytes will ALWAYS be a MessagePack serialized String if it came from put_cf
     // or from a previous successful run of THIS merge operator (if it returns serialized string).
     match deserialize_value::<String>(ev_bytes) {
-        Ok(s) => current_string = s,
-        Err(e) => {
-            // This would indicate a corrupted value or a different type was stored.
-            eprintln!("Merge append: Failed to deserialize existing value: {}. Bytes: {:?}", e, ev_bytes);
-            // Depending on policy, you might start fresh or signal error.
-            // For this append, starting fresh if unreadable might be okay, or error out.
-            // Let's error out for clarity in a test.
-            // In a real app, maybe: current_string = String::new();
-             return None; // Signal merge failure
-        }
+      Ok(s) => current_string = s,
+      Err(e) => {
+        // This would indicate a corrupted value or a different type was stored.
+        eprintln!(
+          "Merge append: Failed to deserialize existing value: {}. Bytes: {:?}",
+          e, ev_bytes
+        );
+        // Depending on policy, you might start fresh or signal error.
+        // For this append, starting fresh if unreadable might be okay, or error out.
+        // Let's error out for clarity in a test.
+        // In a real app, maybe: current_string = String::new();
+        return None; // Signal merge failure
+      }
     }
   } else {
     current_string = String::new(); // No existing value, start with an empty string
   }
 
   for op_bytes in operands {
-      // Each op_bytes is a MessagePack-serialized MergeValue<String>
-      match deserialize_value::<MergeValue<String>>(op_bytes) {
-          Ok(merge_value_struct) => {
-              // We only care about the String payload (merge_value_struct.1)
-              let string_to_append = merge_value_struct.1;
-              if !current_string.is_empty() && !string_to_append.is_empty() {
-                  current_string.push(' ');
-              }
-              current_string.push_str(&string_to_append);
-          }
-          Err(e) => {
-              eprintln!("Merge append: Failed to deserialize operand: {}. Bytes: {:?}", e, op_bytes);
-              // return None; // Signal merge failure
-              continue; // Skip bad operand
-          }
+    // Each op_bytes is a MessagePack-serialized MergeValue<String>
+    match deserialize_value::<MergeValue<String>>(op_bytes) {
+      Ok(merge_value_struct) => {
+        // We only care about the String payload (merge_value_struct.1)
+        let string_to_append = merge_value_struct.1;
+        if !current_string.is_empty() && !string_to_append.is_empty() {
+          current_string.push(' ');
+        }
+        current_string.push_str(&string_to_append);
       }
+      Err(e) => {
+        eprintln!(
+          "Merge append: Failed to deserialize operand: {}. Bytes: {:?}",
+          e, op_bytes
+        );
+        // return None; // Signal merge failure
+        continue; // Skip bad operand
+      }
+    }
   }
 
   // IMPORTANT: The merge operator must return the new value in the format
   // that `get_cf` (i.e., `deserialize_value<String>`) expects.
   // So, we must serialize the final `current_string` back to MessagePack.
   match serialize_value(&current_string) {
-      Ok(serialized_final_string) => Some(serialized_final_string),
-      Err(e) => {
-          eprintln!("Merge append: Failed to serialize final result string: {}", e);
-          None // Signal merge failure
-      }
+    Ok(serialized_final_string) => Some(serialized_final_string),
+    Err(e) => {
+      eprintln!("Merge append: Failed to serialize final result string: {}", e);
+      None // Signal merge failure
+    }
   }
 }
 
@@ -146,34 +152,35 @@ fn default_cf_store_config_for_test(db_name: &str) -> RocksDbCFStoreConfig {
   let db_path_str = get_test_db_path(db_name).to_str().unwrap().to_string();
   let mut default_cf_configs_map = HashMap::new();
   default_cf_configs_map.insert(
-      DEFAULT_CF_NAME.to_string(),
-      BaseCfConfig::default(), // Assuming BaseCfConfig has a sensible Default
+    DEFAULT_CF_NAME.to_string(),
+    BaseCfConfig::default(), // Assuming BaseCfConfig has a sensible Default
   );
 
   RocksDbCFStoreConfig {
-      path: db_path_str,
-      create_if_missing: true,
-      db_tuning_profile: None,
-      column_family_configs: default_cf_configs_map,
-      column_families_to_open: vec![DEFAULT_CF_NAME.to_string()],
-      custom_options_db_and_cf: None,
-      recovery_mode: None,
-      parallelism: None,
-      enable_statistics: None,
+    path: db_path_str,
+    create_if_missing: true,
+    db_tuning_profile: None,
+    column_family_configs: default_cf_configs_map,
+    column_families_to_open: vec![DEFAULT_CF_NAME.to_string()],
+    custom_options_db_and_cf: None,
+    recovery_mode: None,
+    parallelism: None,
+    enable_statistics: None,
   }
 }
 
 fn default_store_config_for_test(db_name: &str) -> RocksDbStoreConfig {
   let db_path_str = get_test_db_path(db_name).to_str().unwrap().to_string();
   RocksDbStoreConfig {
-      path: db_path_str,
-      create_if_missing: true,
-      default_cf_tuning_profile: None,
-      default_cf_merge_operator: None,
-      custom_options_default_cf_and_db: None,
-      recovery_mode: None,
-      parallelism: None,
-      enable_statistics: None,
+    path: db_path_str,
+    create_if_missing: true,
+    default_cf_tuning_profile: None,
+    default_cf_merge_operator: None,
+    custom_options_default_cf_and_db: None,
+    recovery_mode: None,
+    parallelism: None,
+    enable_statistics: None,
+    ..Default::default()
   }
 }
 
@@ -198,7 +205,11 @@ fn test_cf_store_open_with_named_cfs() {
   setup_logging();
   let test_name = "cf_open_named";
   let db_path = setup_test_db(test_name);
-  let cf_names_to_open = vec![DEFAULT_CF_NAME.to_string(), "cf_users".to_string(), "cf_orders".to_string()];
+  let cf_names_to_open = vec![
+    DEFAULT_CF_NAME.to_string(),
+    "cf_users".to_string(),
+    "cf_orders".to_string(),
+  ];
 
   let mut cf_configs_map = HashMap::new();
   for name in &cf_names_to_open {
@@ -241,7 +252,7 @@ fn test_cf_store_crud_on_default_cf() {
   assert!(!store.exists(DEFAULT_CF_NAME, "key1").unwrap());
 
   drop(store);
-   // Cleanup
+  // Cleanup
   cleanup_test_db(&db_path);
 }
 
@@ -256,7 +267,6 @@ fn test_cf_store_crud_on_named_cf() {
   cf_configs_map.insert(DEFAULT_CF_NAME.to_string(), BaseCfConfig::default());
   cf_configs_map.insert(cf_name.to_string(), BaseCfConfig::default());
 
-  
   let mut config = default_cf_store_config_for_test(test_name);
   config.column_families_to_open = vec![DEFAULT_CF_NAME.to_string(), cf_name.to_string()];
   let mut cf_configs_map = HashMap::new(); // Start fresh for this specific setup
@@ -277,7 +287,6 @@ fn test_cf_store_crud_on_named_cf() {
   let on_default: Option<TestData> = store.get(DEFAULT_CF_NAME, "key1").unwrap();
   assert_eq!(on_default, None);
 
-  
   drop(store);
   cleanup_test_db(&db_path);
 }
@@ -294,7 +303,7 @@ fn test_cf_store_op_on_unknown_cf() {
     Err(StoreError::UnknownCf(name)) => assert_eq!(name, "non_existent_cf"),
     res => panic!("Expected UnknownCf error, got {:?}", res),
   }
-  
+
   drop(store);
   cleanup_test_db(&db_path);
 }
@@ -314,13 +323,17 @@ fn test_cf_store_cf_specific_profile() {
 
   let mut config = default_cf_store_config_for_test(test_name);
   config.column_families_to_open.push(cf_name.to_string()); // Add the new CF
-  config.column_family_configs.insert(cf_name.to_string(), BaseCfConfig {
+  config.column_family_configs.insert(
+    cf_name.to_string(),
+    BaseCfConfig {
       tuning_profile: Some(profile),
       merge_operator: None,
-  });
+      ..Default::default()
+    },
+  );
 
   let store = RocksDbCFStore::open(config.clone()).expect("Open with CF profile failed");
-  
+
   drop(store);
   cleanup_test_db(&db_path);
 }
@@ -340,10 +353,14 @@ fn test_cf_store_merge_operator() {
 
   let mut config = default_cf_store_config_for_test(test_name);
   config.column_families_to_open.push(cf_name.to_string());
-  config.column_family_configs.insert(cf_name.to_string(), BaseCfConfig {
+  config.column_family_configs.insert(
+    cf_name.to_string(),
+    BaseCfConfig {
       tuning_profile: None,
       merge_operator: Some(merge_op_config),
-  });
+      ..Default::default()
+    },
+  );
   let store = RocksDbCFStore::open(config.clone()).unwrap();
 
   store.put(cf_name, "merge_key", &"Hello".to_string()).unwrap();
@@ -356,7 +373,7 @@ fn test_cf_store_merge_operator() {
   assert_eq!(retrieved, Some("Hello World Again".to_string()));
 
   drop(store);
-  
+
   cleanup_test_db(&db_path);
 }
 
@@ -394,7 +411,7 @@ fn test_cf_store_custom_options() {
   let store = RocksDbCFStore::open(config.clone()).expect("Open with custom options failed");
   assert!(*db_option_set_flag.lock().unwrap(), "DB custom option was not applied");
   assert!(*cf_option_set_flag.lock().unwrap(), "CF custom option was not applied");
-  
+
   drop(store);
 
   cleanup_test_db(&db_path);
@@ -407,17 +424,21 @@ fn test_cf_store_batch_writer() {
   let db_path = setup_test_db(test_name);
   let mut config = default_cf_store_config_for_test(test_name);
 
-
   let cf1 = "batch_cf1";
   config.path = db_path.to_str().unwrap().to_string(); // Use Path A for the config
   config.column_families_to_open.push(cf1.to_string());
   config.column_family_configs.entry(cf1.to_string()).or_default();
-  
 
   let store = RocksDbCFStore::open(config.clone()).unwrap();
 
-  let val1 = TestData { id: 10, data: "default_batch".into() };
-  let val2 = TestData { id: 11, data: "cf1_batch".into() };
+  let val1 = TestData {
+    id: 10,
+    data: "default_batch".into(),
+  };
+  let val2 = TestData {
+    id: 11,
+    data: "cf1_batch".into(),
+  };
 
   // Create a writer for DEFAULT_CF_NAME
   let mut default_cf_writer = store.batch_writer(DEFAULT_CF_NAME); // New API
@@ -435,7 +456,7 @@ fn test_cf_store_batch_writer() {
   assert_eq!(store.get::<_, TestData>(DEFAULT_CF_NAME, "dk_to_del").unwrap(), None);
 
   drop(store);
-  
+
   cleanup_test_db(&db_path);
 }
 
@@ -454,19 +475,20 @@ fn test_default_store_open_and_crud() {
   // We directly construct the config here instead of using your default_store_config_for_test,
   // because that helper calls your original get_test_db_path.
   let config = RocksDbStoreConfig {
-      path: db_path.to_str().unwrap().to_string(),
-      create_if_missing: true,
-      default_cf_tuning_profile: Some(TuningProfile::LatestValue {
-          mem_budget_mb_per_cf_hint: 16,
-          use_bloom_filters: false,
-          enable_compression: true,
-          io_cap: None,
-      }),
-      default_cf_merge_operator: None,
-      custom_options_default_cf_and_db: None,
-      recovery_mode: None,
-      parallelism: None,
-      enable_statistics: None,
+    path: db_path.to_str().unwrap().to_string(),
+    create_if_missing: true,
+    default_cf_tuning_profile: Some(TuningProfile::LatestValue {
+      mem_budget_mb_per_cf_hint: 16,
+      use_bloom_filters: false,
+      enable_compression: true,
+      io_cap: None,
+    }),
+    default_cf_merge_operator: None,
+    custom_options_default_cf_and_db: None,
+    recovery_mode: None,
+    parallelism: None,
+    enable_statistics: None,
+    ..Default::default()
   };
 
   let store = RocksDbStore::open(config.clone()).unwrap();
@@ -474,7 +496,10 @@ fn test_default_store_open_and_crud() {
   // This assertion should now PASS
   assert_eq!(store.path(), db_path.to_str().unwrap());
 
-  let test_val = TestData { id: 100, data: "simple_store_data".to_string() };
+  let test_val = TestData {
+    id: 100,
+    data: "simple_store_data".to_string(),
+  };
   store.put("key1", &test_val).unwrap();
   let retrieved: Option<TestData> = store.get("key1").unwrap();
   assert_eq!(retrieved, Some(test_val.clone()));

@@ -6,6 +6,8 @@ pub mod cf_tx_store;
 pub mod context;
 pub mod tx_store;
 
+use crate::bytes::AsBytes;
+
 use super::error::{StoreError, StoreResult};
 use super::serialization; // Use helpers from the serialization module
 use super::types::MergeValue;
@@ -35,7 +37,7 @@ pub type WriteBatchTransaction = WriteBatchWithTransaction<true>;
 
 /// Type alias for a Pessimistic Transaction object (`Transaction<'_, TransactionDB>`).
 /// Obtain an instance via `RocksDbTxnStore::begin_transaction()`.
-/// Use static helpers like `set_in_txn`, `get_in_txn` to operate on it.
+/// Use static helpers like `put_in_txn`, `get_in_txn` to operate on it.
 pub type Tx<'a> = Transaction<'a, TransactionDB>;
 
 // --- Static Helper Functions for Pessimistic Transaction Management ---
@@ -59,7 +61,7 @@ pub fn rollback_transaction(txn: Tx) -> StoreResult<()> {
 /// Gets a value from within a pessimistic transaction (`&Tx`), seeing uncommitted changes.
 pub fn get_in_txn<Key, Val>(txn: &Tx, key: Key) -> StoreResult<Option<Val>>
 where
-  Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+  Key: AsBytes + Hash + Eq + PartialEq + Debug,
   Val: DeserializeOwned + Debug,
 {
   let sk = serialization::serialize_key(key)?;
@@ -77,7 +79,7 @@ pub fn merge_in_txn<Key, PatchVal>(
   merge_value: &MergeValue<PatchVal>,
 ) -> StoreResult<()>
 where
-  Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+  Key: AsBytes + Hash + Eq + PartialEq + Debug,
   PatchVal: Serialize + Debug,
 {
   let sk = serialization::serialize_key(key)?;
@@ -88,7 +90,7 @@ where
 // Example: Add remove_in_txn if it was a standalone helper originally
 pub fn remove_in_txn<Key>(txn: &Tx, key: Key) -> StoreResult<()>
 where
-  Key: AsRef<[u8]> + Hash + Eq + PartialEq + Debug,
+  Key: AsBytes + Hash + Eq + PartialEq + Debug,
 {
   let sk = serialization::serialize_key(key)?;
   txn.delete(sk).map_err(StoreError::RocksDb)

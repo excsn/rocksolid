@@ -1,18 +1,13 @@
 use matchit::Params;
 use rocksdb::MergeOperands;
 use rocksolid::{
-  cf_store::{CFOperations, RocksDbCFStore},
-  config::{BaseCfConfig, RocksDbCFStoreConfig},
-  merge_routing::MergeRouterBuilder,
-  MergeValue,
-  MergeValueOperator,
-  StoreResult,
+  cf_store::{CFOperations, RocksDbCFStore}, config::{BaseCfConfig, RocksDbCFStoreConfig}, deserialize_value, merge::{validate_mergevalues_associativity, MergeRouterBuilder}, serialize_value, MergeValue, MergeValueOperator, StoreResult
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 
-// --- Merge Handlers (remain the same) ---
+// --- Merge Handlers ---
 fn string_append_handler(
   _key: &[u8],
   existing_val: Option<&[u8]>,
@@ -22,14 +17,20 @@ fn string_append_handler(
   let mut current_list: String = existing_val
     .map(|v| String::from_utf8_lossy(v).into_owned())
     .unwrap_or_default();
-  for op in operands {
-    let append_str = String::from_utf8_lossy(op);
-    if !current_list.is_empty() {
-      current_list.push(',');
+
+  if let Ok(merge_values) = validate_mergevalues_associativity::<String>(operands.into_iter()) {
+
+    for op in merge_values {
+      let append_str = op.1;
+      if !current_list.is_empty() {
+        current_list.push(',');
+      }
+      current_list.push_str(&append_str);
     }
-    current_list.push_str(&append_str);
+    return serialize_value(&current_list).ok();
   }
-  Some(current_list.into_bytes())
+
+  return None;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -41,18 +42,27 @@ fn set_union_full_handler(
   operands: &MergeOperands,
   _params: &Params,
 ) -> Option<Vec<u8>> {
+  
   let mut current_set: HashSet<String> = existing_val
-    .and_then(|v| rocksolid::deserialize_value::<SimpleSet>(v).ok())
+    .and_then(|v| deserialize_value::<SimpleSet>(v).ok())
     .map(|s| s.0)
     .unwrap_or_default();
-  for op in operands {
-    if let Ok(operand_set) = rocksolid::deserialize_value::<SimpleSet>(op) {
-      current_set.extend(operand_set.0);
-    } else {
-      log::warn!("Failed to deserialize set operand");
+
+  for op in operands.into_iter() {
+
+    let merge_value_op_result = deserialize_value::<MergeValue<SimpleSet>>(op);
+
+    if let Ok(merge_value_op) = merge_value_op_result {
+
+      match merge_value_op.0 {
+        MergeValueOperator::SetUnion => {
+          current_set.extend(merge_value_op.1.0);
+        }
+        _ => {},
+      }
     }
   }
-  rocksolid::serialize_value(&SimpleSet(current_set)).ok()
+  return serialize_value(&SimpleSet(current_set)).ok();
 }
 
 fn set_union_partial_handler(
@@ -62,18 +72,16 @@ fn set_union_partial_handler(
   _params: &Params,
 ) -> Option<Vec<u8>> {
   let mut combined_set: HashSet<String> = HashSet::new();
-  for op in operands {
-    if let Ok(operand_set) = rocksolid::deserialize_value::<SimpleSet>(op) {
-      combined_set.extend(operand_set.0);
-    } else {
-      log::warn!("Failed to deserialize set operand in partial merge");
+
+  if let Ok(merge_values) = validate_mergevalues_associativity::<SimpleSet>(operands.into_iter()) {
+  
+    for op in merge_values {
+      combined_set.extend(op.1.0);
     }
+    return serialize_value(&SimpleSet(combined_set)).ok();
   }
-  if combined_set.is_empty() {
-    None
-  } else {
-    rocksolid::serialize_value(&SimpleSet(combined_set)).ok()
-  }
+  
+  return None;
 }
 
 const LISTS_CF: &str = "lists_cf_for_merge";
@@ -81,6 +89,7 @@ const SETS_CF: &str = "sets_cf_for_merge";
 const DEFAULT_CF: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 
 fn main() -> StoreResult<()> {
+  
   let temp_dir = tempdir().expect("Failed to create temp dir");
   let db_path = temp_dir.path().join("merge_router_db_new");
   println!("Merge Router DB path: {}", db_path.display());
@@ -92,9 +101,9 @@ fn main() -> StoreResult<()> {
 
   // These routes define patterns. The actual merge function (router_full_merge_fn)
   // will be applied to CFs that are configured with this named merge operator.
-  router_builder.add_route("/lists/:list_id", Some(string_append_handler), None)?;
+  router_builder.add_route("/lists/{list_id}", Some(string_append_handler), None)?;
   router_builder.add_route(
-    "/sets/:set_name",
+    "/sets/{set_name}",
     Some(set_union_full_handler),
     Some(set_union_partial_handler),
   )?;
@@ -128,7 +137,7 @@ fn main() -> StoreResult<()> {
   };
 
   // --- Open and Use ---
-  let store = RocksDbCFStore::open(config)?;
+  let store = RocksDbCFStore::open(config.clone())?;
 
   // Merge into list (targets LISTS_CF)
   let list_key = "/lists/shopping"; // Key matches a route
@@ -173,6 +182,8 @@ fn main() -> StoreResult<()> {
   assert_eq!(final_set.len(), 2);
   assert!(final_set.contains("alice"));
   assert!(final_set.contains("bob"));
+  
+  let _ = RocksDbCFStore::destroy(&db_path, config);
 
   Ok(())
 }
