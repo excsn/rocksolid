@@ -1,6 +1,6 @@
 [package]
 name = "rocksolid"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 description = "An ergonomic persistence layer over RocksDB, offering Column Family support, transactions (CF-aware), batching, merge routing, value expiry, and performance tuning."
 authors = ["Excerion Sun <dev@excsn.com>"]

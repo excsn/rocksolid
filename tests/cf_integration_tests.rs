@@ -84,6 +84,14 @@ struct TestData {
   data: String,
 }
 
+// TestData struct from existing tests, can be reused or a new one for iteration tests
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Ord, PartialOrd)] // Added Ord, PartialOrd for sorting
+struct IterTestData {
+  id: u32,
+  data: String,
+  value_num: i32, // For ordering and distinction
+}
+
 fn append_merge_operator(
   _new_key: &[u8],
   existing_val_bytes: Option<&[u8]>, // Raw bytes from DB

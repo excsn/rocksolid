@@ -7,7 +7,7 @@ use super::context::TransactionContext;
 use crate::bytes::AsBytes;
 use crate::config::{BaseCfConfig, MergeOperatorConfig, RecoveryMode, RockSolidMergeOperatorCfConfig};
 use crate::error::{StoreError, StoreResult};
-use crate::iter::IterConfig;
+use crate::iter::{IterConfig, IterationResult};
 use crate::store::DefaultCFOperations;
 use crate::tuner::{Tunable, TuningProfile};
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
@@ -348,7 +348,19 @@ impl DefaultCFOperations for RocksDbTxnStore {
   }
 
   // --- Iterator / Find Operations on COMMITTED data (default CF) ---
-  // --- Iterator / Find Operations ---
+
+  fn iterate<'store_lt, SerKey, OutK, OutV>(
+    &'store_lt self,
+    config: IterConfig<'store_lt, SerKey, OutK, OutV>,
+  ) -> Result<IterationResult<'store_lt, OutK, OutV>, StoreError>
+  where
+    SerKey: AsBytes + Hash + Eq + PartialEq + Debug,
+    OutK: DeserializeOwned + Debug + 'store_lt,
+    OutV: DeserializeOwned + Debug + 'store_lt,
+  {
+    self.cf_store.iterate(config)
+  }
+
   fn find_by_prefix<Key, Val>(&self, prefix: &Key, direction: rocksdb::Direction) -> StoreResult<Vec<(Key, Val)>>
   where
     Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
@@ -373,54 +385,6 @@ impl DefaultCFOperations for RocksDbTxnStore {
     self
       .cf_store
       .find_from(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
-  }
-
-  fn iterate_cf<'a, Key, Val>(
-    &'a self,
-    cfg: IterConfig<Key, Val>,
-  ) -> Result<Box<dyn Iterator<Item = Result<(Key, Val), StoreError>> + 'a>, StoreError>
-  where
-    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + 'a,
-    Val: DeserializeOwned + Debug + 'a,
-  {
-    self.cf_store.iterate_cf(cfg)
-  }
-
-  fn iterate_cf_control<Key>(
-    &self,
-    prefix: Option<Key>,
-    start: Option<Key>,
-    cfg: IterConfig<(), ()>,
-  ) -> Result<(), StoreError>
-  where
-    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug,
-  {
-    self.cf_store.iterate_cf_control(prefix, start, cfg)
-  }
-
-  fn iterate_by_prefix_control<Key, F>(
-    &self,
-    start_key: Key,
-    direction: Direction,
-    control_fn: F,
-  ) -> Result<(), StoreError>
-  where
-    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
-    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
-  {
-    self
-      .cf_store
-      .iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
-  }
-
-  fn iterate_from_control<Key, F>(&self, start_key: Key, direction: Direction, control_fn: F) -> Result<(), StoreError>
-  where
-    Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,
-    F: FnMut(&[u8], &[u8]) -> IterationControlDecision + 'static,
-  {
-    self
-      .cf_store
-      .iterate_by_prefix_control(DEFAULT_COLUMN_FAMILY_NAME, start_key, direction, control_fn)
   }
 
   fn find_from_with_expire_val<Key, Val, ControlFn>(
