@@ -11,11 +11,11 @@ use crate::iter::{IterConfig, IterationResult};
 use crate::store::DefaultCFOperations;
 use crate::tuner::{Tunable, TuningProfile};
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
-use crate::{serialization, CFOperations}; // For direct store methods like set/get on committed state
+use crate::{serialization, CFOperations, RockSolidCompactionFilterRouterConfig}; // For direct store methods like set/get on committed state
 
 use bytevec::ByteDecodable;
 use rocksdb::{
-  Direction, Options as RocksDbOptions, Transaction, TransactionDB, TransactionDBOptions,
+  Options as RocksDbOptions, Transaction, TransactionDB, TransactionDBOptions,
   WriteOptions as RocksDbWriteOptions, DEFAULT_COLUMN_FAMILY_NAME,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -31,6 +31,7 @@ pub struct RocksDbTxnStoreConfig {
   pub create_if_missing: bool,
   pub default_cf_tuning_profile: Option<TuningProfile>,
   pub default_cf_merge_operator: Option<MergeOperatorConfig>,
+  pub compaction_filter_router: Option<RockSolidCompactionFilterRouterConfig>,
   pub custom_options_default_cf_and_db: CustomDbAndDefaultCb,
   pub recovery_mode: Option<RecoveryMode>,
   pub parallelism: Option<i32>,
@@ -50,6 +51,7 @@ impl Default for RocksDbTxnStoreConfig {
       parallelism: None,
       enable_statistics: None,
       txn_db_options: None,
+      compaction_filter_router: None,
     }
   }
 }
@@ -67,6 +69,7 @@ impl From<RocksDbTxnStoreConfig> for RocksDbCFTxnStoreConfig {
           partial_merge_fn: mo_config.partial_merge_fn,
         }),
       comparator: None,
+      compaction_filter_router:cfg.compaction_filter_router,
     };
     cf_configs.insert(
       rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(),
@@ -328,6 +331,14 @@ impl DefaultCFOperations for RocksDbTxnStore {
       .db_txn_raw()
       .merge(ser_key, raw_merge_op)
       .map_err(StoreError::RocksDb)
+  }
+
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug,
+  {
+    self.cf_store.merge_with_expiry(cf_name, key, value, expire_time)
   }
 
   fn delete<K>(&self, key: K) -> StoreResult<()>

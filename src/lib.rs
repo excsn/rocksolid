@@ -7,6 +7,7 @@ extern crate rmp_serde as rmps;
 pub mod batch;
 pub mod bytes;
 pub mod cf_store;
+pub mod compaction_filter;
 pub mod config;
 pub mod store;
 pub mod error;
@@ -25,7 +26,7 @@ pub mod utils; // Backup/migrate utilities
 pub use batch::BatchWriter;
 pub use cf_store::{RocksDbCFStore, CFOperations};
 pub use config::{
-    RocksDbStoreConfig, RocksDbCFStoreConfig, BaseCfConfig, MergeOperatorConfig, MergeFn, RecoveryMode,
+    RocksDbStoreConfig, RocksDbCFStoreConfig, BaseCfConfig, MergeOperatorConfig, MergeFn, RecoveryMode, RockSolidCompactionFilterRouterConfig,
 };
 pub use error::{StoreError, StoreResult}; // Allow direct use of error types
 pub use merge::{MergeRouteHandlerFn, MergeRouterBuilder}; // Re-export merge routing tools
@@ -34,3 +35,6 @@ pub use store::RocksDbStore;
 pub use tuner::TuningProfile;
 pub use tx::{RocksDbTxnStore, Tx, WriteBatchTransaction};
 pub use types::{IterationControlDecision, MergeValue, MergeValueOperator, ValueWithExpiry};
+
+pub use rocksdb;
+pub use matchit;

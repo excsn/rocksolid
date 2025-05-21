@@ -82,8 +82,7 @@ fn main() -> StoreResult<()> {
     // --- To use BatchWriter (even for default CF) with RocksDbStore ---
     // You need to get the underlying RocksDbCFStore
     println!("\n--- Batch operation on default CF via cf_store() ---");
-    let cf_store_ref = store.cf_store(); // Get Arc<RocksDbCFStore>
-    let mut batch = cf_store_ref.batch_writer(rocksdb::DEFAULT_COLUMN_FAMILY_NAME);
+    let mut batch = store.batch_writer();
     let item_batch = Item {
       sku: "BCH-001".into(),
       name: "Batch Item".into(),

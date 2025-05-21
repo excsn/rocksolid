@@ -55,7 +55,7 @@ fn set_union_full_handler(
     if let Ok(merge_value_op) = merge_value_op_result {
 
       match merge_value_op.0 {
-        MergeValueOperator::SetUnion => {
+        MergeValueOperator::Union => {
           current_set.extend(merge_value_op.1.0);
         }
         _ => {},
@@ -101,11 +101,11 @@ fn main() -> StoreResult<()> {
 
   // These routes define patterns. The actual merge function (router_full_merge_fn)
   // will be applied to CFs that are configured with this named merge operator.
-  router_builder.add_route("/lists/{list_id}", Some(string_append_handler), None)?;
+  router_builder.add_full_merge_route("/lists/{list_id}", string_append_handler)?;
   router_builder.add_route(
     "/sets/{set_name}",
-    Some(set_union_full_handler),
-    Some(set_union_partial_handler),
+  set_union_full_handler,
+    set_union_partial_handler,
   )?;
   let router_merge_op_config = router_builder.build()?; // This is a MergeOperatorConfig
 
@@ -144,12 +144,12 @@ fn main() -> StoreResult<()> {
   store.merge(
     LISTS_CF,
     list_key,
-    &MergeValue(MergeValueOperator::Append, "apples".to_string()),
+    &MergeValue(MergeValueOperator::Add, "apples".to_string()),
   )?;
   store.merge(
     LISTS_CF,
     list_key,
-    &MergeValue(MergeValueOperator::Append, "bananas".to_string()),
+    &MergeValue(MergeValueOperator::Add, "bananas".to_string()),
   )?;
 
   let list_val: Option<String> = store.get(LISTS_CF, list_key)?;
@@ -163,7 +163,7 @@ fn main() -> StoreResult<()> {
   store.merge(
     SETS_CF,
     set_key,
-    &MergeValue(MergeValueOperator::SetUnion, &SimpleSet(initial_set)),
+    &MergeValue(MergeValueOperator::Union, &SimpleSet(initial_set)),
   )?;
 
   let mut next_set = HashSet::new();
@@ -172,7 +172,7 @@ fn main() -> StoreResult<()> {
   store.merge(
     SETS_CF,
     set_key,
-    &MergeValue(MergeValueOperator::SetUnion, &SimpleSet(next_set)),
+    &MergeValue(MergeValueOperator::Union, &SimpleSet(next_set)),
   )?;
 
   let set_val: Option<SimpleSet> = store.get(SETS_CF, set_key)?;

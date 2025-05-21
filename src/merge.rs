@@ -85,16 +85,11 @@ impl MergeRouterBuilder {
   pub fn add_route(
     &mut self,
     route_pattern: &str,
-    mut full_merge_handler: Option<MergeRouteHandlerFn>,
-    mut partial_merge_handler: Option<MergeRouteHandlerFn>,
+    full_merge_handler: MergeRouteHandlerFn,
+     partial_merge_handler: MergeRouteHandlerFn,
   ) -> StoreResult<&mut Self> {
-    if let Some(handler) = full_merge_handler.take() {
-      self.add_full_merge_route(route_pattern, handler)?;
-    }
-
-    if let Some(handler) = partial_merge_handler.take() {
-      self.add_partial_merge_route(route_pattern, handler)?;
-    }
+    self.add_full_merge_route(route_pattern, full_merge_handler)?;
+    self.add_partial_merge_route(route_pattern, partial_merge_handler)?;
     Ok(self)
   }
 

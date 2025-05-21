@@ -372,9 +372,9 @@ fn test_cf_store_merge_operator() {
   let store = RocksDbCFStore::open(config.clone()).unwrap();
 
   store.put(cf_name, "merge_key", &"Hello".to_string()).unwrap();
-  let merge_op = MergeValue(MergeValueOperator::Append, "World".to_string()); // String for PatchVal
+  let merge_op = MergeValue(MergeValueOperator::Add, "World".to_string()); // String for PatchVal
   store.merge(cf_name, "merge_key", &merge_op).unwrap();
-  let merge_op2 = MergeValue(MergeValueOperator::Append, "Again".to_string());
+  let merge_op2 = MergeValue(MergeValueOperator::Add, "Again".to_string());
   store.merge(cf_name, "merge_key", &merge_op2).unwrap();
 
   let retrieved: Option<String> = store.get(cf_name, "merge_key").unwrap();

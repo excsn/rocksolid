@@ -85,6 +85,11 @@ pub trait DefaultCFOperations {
   where
     K: AsBytes + Hash + Eq + PartialEq + Debug;
 
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug;
+
   // --- Iterator / Find Operations ---
   // --- Iterator / Find Operations ---
 
@@ -340,6 +345,14 @@ impl DefaultCFOperations for RocksDbStore {
       .merge_raw(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, key, raw_merge_op)
   }
 
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug,
+  {
+    self.cf_store.merge_with_expiry(cf_name, key, value, expire_time)
+  }
+
   fn delete<K>(&self, key: K) -> StoreResult<()>
   where
     K: AsBytes + Hash + Eq + PartialEq + Debug,
@@ -369,7 +382,7 @@ impl DefaultCFOperations for RocksDbStore {
   {
     self.cf_store.iterate(config)
   }
-  
+
   fn find_by_prefix<Key, Val>(&self, prefix: &Key, direction: rocksdb::Direction) -> StoreResult<Vec<(Key, Val)>>
   where
     Key: ByteDecodable + AsBytes + DeserializeOwned + Hash + Eq + PartialEq + Debug + Clone,

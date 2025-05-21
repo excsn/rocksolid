@@ -129,6 +129,30 @@ impl std::fmt::Debug for MergeOperatorConfig {
     }
 }
 
+// --- New Compaction Filter Router Types ---
+
+/// Type alias for the main router function pointer.
+/// This is the function (`router_compaction_filter_fn`) that will be directly
+/// registered with RocksDB if a CF uses the compaction filter router.
+pub type CompactionFilterRouterFnPtr = fn(u32, &[u8], &[u8]) -> rocksdb::compaction_filter::Decision;
+
+/// Configuration for enabling the key-pattern-based compaction filter router for a Column Family.
+#[derive(Clone)]
+pub struct RockSolidCompactionFilterRouterConfig {
+  pub name: String,
+  /// A pointer to the main router function (e.g., `router_compaction_filter_fn`).
+  pub filter_fn_ptr: CompactionFilterRouterFnPtr,
+}
+
+impl std::fmt::Debug for RockSolidCompactionFilterRouterConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("RockSolidCompactionFilterRouterConfig")
+      .field("name", &self.name)
+      // Printing the function pointer itself isn't very informative
+      .field("filter_fn_ptr_is_set", &true)
+      .finish()
+  }
+}
 
 /// Main configuration struct for opening a `RocksDbStore` (Original Struct).
 /// This is preserved for backward compatibility, especially for `RocksDbTxnStore`.
@@ -289,22 +313,22 @@ pub struct RockSolidMergeOperatorCfConfig { // Renamed to avoid ambiguity with o
 }
 
 impl std::fmt::Debug for RockSolidMergeOperatorCfConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RockSolidMergeOperatorCfConfig")
-         .field("name", &self.name)
-         .field("full_merge_fn_is_some", &self.full_merge_fn.is_some())
-         .field("partial_merge_fn_is_some", &self.partial_merge_fn.is_some())
-         .finish()
-    }
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("RockSolidMergeOperatorCfConfig")
+      .field("name", &self.name)
+      .field("full_merge_fn_is_some", &self.full_merge_fn.is_some())
+      .field("partial_merge_fn_is_some", &self.partial_merge_fn.is_some())
+      .finish()
+  }
 }
 
 impl From<MergeOperatorConfig> for RockSolidMergeOperatorCfConfig {
   fn from(original: MergeOperatorConfig) -> Self {
-      RockSolidMergeOperatorCfConfig {
-          name: original.name,
-          full_merge_fn: original.full_merge_fn,
-          partial_merge_fn: original.partial_merge_fn,
-      }
+    RockSolidMergeOperatorCfConfig {
+      name: original.name,
+      full_merge_fn: original.full_merge_fn,
+      partial_merge_fn: original.partial_merge_fn,
+    }
   }
 }
 
@@ -314,6 +338,7 @@ pub struct BaseCfConfig {
   pub tuning_profile: Option<TuningProfile>,
   pub merge_operator: Option<RockSolidMergeOperatorCfConfig>,
   pub comparator: Option<RockSolidComparatorOpt>,
+  pub compaction_filter_router: Option<RockSolidCompactionFilterRouterConfig>,
 }
 
 /// Configuration for `RocksDbCFStore` (non-transactional, CF-aware store).
@@ -332,19 +357,19 @@ pub struct RocksDbCFStoreConfig {
 }
 
 impl Debug for RocksDbCFStoreConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RocksDbCFStoreConfig")
-         .field("path", &self.path)
-         .field("create_if_missing", &self.create_if_missing)
-         .field("db_tuning_profile_is_some", &self.db_tuning_profile.is_some())
-         .field("column_family_configs_count", &self.column_family_configs.len())
-         .field("column_families_to_open", &self.column_families_to_open)
-         .field("custom_options_db_and_cf_is_some", &self.custom_options_db_and_cf.is_some())
-         .field("recovery_mode", &self.recovery_mode)
-         .field("parallelism", &self.parallelism)
-         .field("enable_statistics", &self.enable_statistics)
-         .finish()
-    }
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("RocksDbCFStoreConfig")
+      .field("path", &self.path)
+      .field("create_if_missing", &self.create_if_missing)
+      .field("db_tuning_profile_is_some", &self.db_tuning_profile.is_some())
+      .field("column_family_configs_count", &self.column_family_configs.len())
+      .field("column_families_to_open", &self.column_families_to_open)
+      .field("custom_options_db_and_cf_is_some", &self.custom_options_db_and_cf.is_some())
+      .field("recovery_mode", &self.recovery_mode)
+      .field("parallelism", &self.parallelism)
+      .field("enable_statistics", &self.enable_statistics)
+      .finish()
+  }
 }
 
 impl Default for RocksDbCFStoreConfig {
@@ -372,6 +397,7 @@ pub struct RocksDbStoreConfig {
   pub default_cf_tuning_profile: Option<TuningProfile>,
   pub default_cf_merge_operator: Option<RockSolidMergeOperatorCfConfig>,
   pub comparator: Option<RockSolidComparatorOpt>,
+  pub compaction_filter_router: Option<RockSolidCompactionFilterRouterConfig>,
   pub custom_options_default_cf_and_db: Option<Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut Tunable<RocksDbOptions>) + Send + Sync + 'static>>,
   pub recovery_mode: Option<RecoveryMode>, // Shared enum
   pub parallelism: Option<i32>,
@@ -379,19 +405,20 @@ pub struct RocksDbStoreConfig {
 }
 
 impl Debug for RocksDbStoreConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RocksDbStoreConfig")
-         .field("path", &self.path)
-         .field("create_if_missing", &self.create_if_missing)
-         .field("default_cf_tuning_profile_is_some", &self.default_cf_tuning_profile.is_some())
-         .field("default_cf_merge_operator_is_some", &self.default_cf_merge_operator.is_some())
-         .field("custom_options_default_cf_and_db_is_some", &self.custom_options_default_cf_and_db.is_some())
-         .field("recovery_mode", &self.recovery_mode)
-         .field("parallelism", &self.parallelism)
-         .field("enable_statistics", &self.enable_statistics)
-         .finish()
-    }
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("RocksDbStoreConfig")
+      .field("path", &self.path)
+      .field("create_if_missing", &self.create_if_missing)
+      .field("default_cf_tuning_profile_is_some", &self.default_cf_tuning_profile.is_some())
+      .field("default_cf_merge_operator_is_some", &self.default_cf_merge_operator.is_some())
+      .field("custom_options_default_cf_and_db_is_some", &self.custom_options_default_cf_and_db.is_some())
+      .field("recovery_mode", &self.recovery_mode)
+      .field("parallelism", &self.parallelism)
+      .field("enable_statistics", &self.enable_statistics)
+      .finish()
+  }
 }
+
 impl Default for RocksDbStoreConfig {
   fn default() -> Self {
     Self {
@@ -404,6 +431,7 @@ impl Default for RocksDbStoreConfig {
       parallelism: None,
       enable_statistics: None,
       comparator: None,
+      compaction_filter_router: None,
     }
   }
 }
@@ -415,24 +443,25 @@ impl From<RocksDbStoreConfig> for RocksDbCFStoreConfig {
       tuning_profile: cfg.default_cf_tuning_profile,
       merge_operator: cfg.default_cf_merge_operator,
       comparator: cfg.comparator,
+      compaction_filter_router: cfg.compaction_filter_router,
     };
     cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), default_cf_config);
 
     let custom_db_and_cf_callback: Option<Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut HashMap<String, Tunable<RocksDbOptions>>) + Send + Sync + 'static>> = 
-        cfg.custom_options_default_cf_and_db.map(|user_fn| {
-            // user_fn is Arc<dyn Fn(&mut Tunable<Options>, &mut Tunable<Options>) + Send + Sync + 'static>
-            // The new closure captures user_fn (an Arc, which is 'static if T is 'static).
-            // The closure itself will be 'static because it only captures an Arc.
-            let new_closure = move |db_opts: &mut Tunable<RocksDbOptions>, cf_opts_map: &mut HashMap<String, Tunable<RocksDbOptions>>| {
-                if let Some(default_cf_opts) = cf_opts_map.get_mut(rocksdb::DEFAULT_COLUMN_FAMILY_NAME) {
-                    user_fn(db_opts, default_cf_opts);
-                } else {
-                    log::warn!("Default CF options not found in map during custom_options_default_cf_and_db translation. Custom options for default CF may not be applied.");
-                }
-            };
-            // Explicitly cast to the full trait object type including 'static for the Fn
-            Arc::new(new_closure) as Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut HashMap<String, Tunable<RocksDbOptions>>) + Send + Sync + 'static>
-        });
+      cfg.custom_options_default_cf_and_db.map(|user_fn| {
+          // user_fn is Arc<dyn Fn(&mut Tunable<Options>, &mut Tunable<Options>) + Send + Sync + 'static>
+          // The new closure captures user_fn (an Arc, which is 'static if T is 'static).
+          // The closure itself will be 'static because it only captures an Arc.
+          let new_closure = move |db_opts: &mut Tunable<RocksDbOptions>, cf_opts_map: &mut HashMap<String, Tunable<RocksDbOptions>>| {
+              if let Some(default_cf_opts) = cf_opts_map.get_mut(rocksdb::DEFAULT_COLUMN_FAMILY_NAME) {
+                  user_fn(db_opts, default_cf_opts);
+              } else {
+                  log::warn!("Default CF options not found in map during custom_options_default_cf_and_db translation. Custom options for default CF may not be applied.");
+              }
+          };
+          // Explicitly cast to the full trait object type including 'static for the Fn
+          Arc::new(new_closure) as Arc<dyn Fn(&mut Tunable<RocksDbOptions>, &mut HashMap<String, Tunable<RocksDbOptions>>) + Send + Sync + 'static>
+      });
     
     RocksDbCFStoreConfig {
       path: cfg.path,

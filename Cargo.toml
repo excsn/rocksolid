@@ -1,12 +1,12 @@
 [package]
 name = "rocksolid"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
-description = "An ergonomic persistence layer over RocksDB, offering Column Family support, transactions (CF-aware), batching, merge routing, value expiry, and performance tuning."
 authors = ["Excerion Sun <dev@excsn.com>"]
 license = "MPL-2.0"
 
 # Metadata for crates.io
+description = "An ergonomic persistence layer over RocksDB, offering Column Family support, transactions (CF-aware), batching, merge routing, value expiry, and performance tuning."
 readme = "README.md"
 repository = "https://github.com/excsn/rocksolid"
 documentation = "https://docs.rs/rocksolid"
@@ -28,7 +28,7 @@ rmp-serde = "^1"
 rocksdb = { version = "^0.22", default-features = false }
 serde = { version = "^1.0", features = ["derive"] }
 serde_derive = "^1.0"
-thiserror = "^1.0"
+thiserror = "^2.0"
 
 [dev-dependencies]
 chrono = "^0.4"

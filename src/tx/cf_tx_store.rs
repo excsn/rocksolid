@@ -157,8 +157,8 @@ impl RocksDbCFTxnStore {
       .collect();
 
     for (cf_name, cf_tx_specific_config) in &cfg.column_family_configs {
-      if let Some(merge_op_config) = &cf_tx_specific_config.base_config.merge_operator {
-        if let Some(opts_to_modify) = raw_cf_options_map.get_mut(cf_name) {
+      if let Some(opts_to_modify) = raw_cf_options_map.get_mut(cf_name) {
+        if let Some(merge_op_config) = &cf_tx_specific_config.base_config.merge_operator {
           opts_to_modify.set_merge_operator(
             &merge_op_config.name,
             merge_op_config.full_merge_fn.unwrap_or(default_full_merge),
@@ -166,6 +166,37 @@ impl RocksDbCFTxnStore {
           );
         } else {
           log::warn!("Merge operator configured for CF '{}' which is not in column_families_to_open or its options were not prepared.", cf_name);
+        }
+        // Apply Comparator by calling the method on the enum instance if Some
+        if let Some(comparator_choice) = &cf_tx_specific_config.base_config.comparator {
+          comparator_choice.apply_to_opts(cf_name, opts_to_modify);
+        } else {
+          log::debug!(
+            "No explicit comparator specified for CF '{}'. Using RocksDB default or prior setting.",
+            cf_name
+          );
+        }
+
+        // --- START: Apply Compaction Filter Router ---
+        if let Some(filter_router_config) = &cf_tx_specific_config.base_config.compaction_filter_router {
+          // The `filter_router_config.filter_fn_ptr` is the `router_compaction_filter_fn`.
+          // RocksDB's set_compaction_filter expects a Box<dyn Fn...>.
+          // We need to create a closure that calls our fn pointer, then Box that closure.
+          let actual_router_fn_ptr = filter_router_config.filter_fn_ptr;
+
+          let boxed_router_callback = Box::new(
+            move |level: u32, key: &[u8], value: &[u8]| -> rocksdb::compaction_filter::Decision {
+              // Call the actual router function via its pointer
+              actual_router_fn_ptr(level, key, value)
+            },
+          );
+
+          opts_to_modify.set_compaction_filter(&filter_router_config.name, boxed_router_callback);
+          log::debug!(
+            "Applied compaction filter router named '{}' to CF '{}'",
+            filter_router_config.name,
+            cf_name
+          );
         }
       }
     }
@@ -394,7 +425,7 @@ impl CFOperations for RocksDbCFTxnStore {
   // --- CF-Aware ITERATOR operations on COMMITTED data ---
 
   // --- Iterator / Find Operations ---
-  
+
   fn iterate<'store_lt, SerKey, OutK, OutV>(
     &'store_lt self,
     mut config: IterConfig<'store_lt, SerKey, OutK, OutV>,
@@ -767,6 +798,15 @@ impl CFOperations for RocksDbCFTxnStore {
       self.db.merge_cf(&handle, &ser_key, raw_merge_operand)
     }
     .map_err(StoreError::RocksDb)
+  }
+
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug,
+  {
+    let vwe = ValueWithExpiry::from_value(expire_time, value)?;
+    self.merge_raw(cf_name, key, &vwe.serialize_for_storage())
   }
 }
 

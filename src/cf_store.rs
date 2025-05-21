@@ -87,6 +87,11 @@ pub trait CFOperations {
   where
     K: AsBytes + Hash + Eq + PartialEq + Debug;
 
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug;
+
   // --- Iterator / Find Operations ---
 
   /// General purpose iteration method.
@@ -282,6 +287,28 @@ impl RocksDbCFStore {
         } else {
           log::debug!(
             "No explicit comparator specified for CF '{}'. Using RocksDB default or prior setting.",
+            cf_name
+          );
+        }
+
+        // --- START: Apply Compaction Filter Router ---
+        if let Some(filter_router_config) = &cf_specific_config.compaction_filter_router {
+          // The `filter_router_config.filter_fn_ptr` is the `router_compaction_filter_fn`.
+          // RocksDB's set_compaction_filter expects a Box<dyn Fn...>.
+          // We need to create a closure that calls our fn pointer, then Box that closure.
+          let actual_router_fn_ptr = filter_router_config.filter_fn_ptr;
+
+          let boxed_router_callback = Box::new(
+            move |level: u32, key: &[u8], value: &[u8]| -> rocksdb::compaction_filter::Decision {
+              // Call the actual router function via its pointer
+              actual_router_fn_ptr(level, key, value)
+            },
+          );
+
+          opts_to_modify.set_compaction_filter(&filter_router_config.name, boxed_router_callback);
+          log::debug!(
+            "Applied compaction filter router named '{}' to CF '{}'",
+            filter_router_config.name,
             cf_name
           );
         }
@@ -677,6 +704,15 @@ impl CFOperations for RocksDbCFStore {
       self.db.merge_cf(&handle, &ser_key, raw_merge_operand)
     }
     .map_err(StoreError::RocksDb)
+  }
+
+  fn merge_with_expiry<K, V>(&self, cf_name: &str, key: K, value: &V, expire_time: u64) -> StoreResult<()>
+  where
+    K: AsBytes + Hash + Eq + PartialEq + Debug,
+    V: Serialize + DeserializeOwned + Debug,
+  {
+    let vwe = ValueWithExpiry::from_value(expire_time, value)?;
+    self.merge_raw(cf_name, key, &vwe.serialize_for_storage())
   }
 
   // --- Iterator / Find Operations ---
