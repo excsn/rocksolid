@@ -70,8 +70,9 @@ fn transient_remover_handler(_level: u32, key_bytes: &[u8], _value_bytes: &[u8],
 fn version_changer_handler(_level: u32, key_bytes: &[u8], _value_bytes: &[u8], _params: &Params) -> RocksDbDecision {
   if key_bytes == b"version:key" {
     // Ensure serialize_value is accessible and works as expected
-    let new_val_bytes = serialize_value(&"compacted_v2".to_string()).expect("Serialization failed");
-    RocksDbDecision::ChangeValue(new_val_bytes)
+    let new_value_bytes = serialize_value(&"compacted_v2".to_string()).expect("Serialization failed");
+    let static_slice: &'static [u8] = Box::leak(new_value_bytes.into_boxed_slice());
+    RocksDbDecision::Change(static_slice)
   } else {
     RocksDbDecision::Keep
   }
@@ -146,7 +147,7 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert!(store.get::<_, String>(TEST_CF, "transient:data1")?.is_none());
   assert_eq!(
@@ -159,7 +160,7 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
 #[test]
 fn test_compaction_change_value() -> StoreResult<()> {
   let mut router_builder = CompactionFilterRouterBuilder::new();
-  router_builder.operator_name("TestChangeValueRouter");
+  router_builder.operator_name("TestChangeRouter");
   router_builder.add_route("/*any_pattern", Arc::new(version_changer_handler))?;
   let filter_config = router_builder.build()?;
 
@@ -172,7 +173,7 @@ fn test_compaction_change_value() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert_eq!(
     store.get::<_, String>(TEST_CF, "version:key")?,
@@ -205,7 +206,7 @@ fn test_compaction_non_utf8_key_is_kept() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert_eq!(
     store.get_raw(TEST_CF, &non_utf8_key)?,
@@ -236,7 +237,7 @@ fn test_compaction_route_with_parameters() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert!(store.get::<_, String>(TEST_CF, "/users/tempuser/profile")?.is_none());
   assert_eq!(
@@ -275,7 +276,7 @@ fn test_compaction_expiry_filter() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert!(
     store.get_raw(TEST_CF, "/cache/item1")?.is_none(),
@@ -309,7 +310,7 @@ fn test_compaction_default_keep_if_no_route_matches() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert!(store.get::<_, String>(TEST_CF, "/remove_this_exact_key")?.is_none());
   assert_eq!(
@@ -341,7 +342,7 @@ fn test_compaction_no_routes_configured_keeps_all() -> StoreResult<()> {
   store.db_raw().flush_cf(&cf_handle)?;
   store
     .db_raw()
-    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>)?;
+    .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert_eq!(store.get::<_, String>(TEST_CF, "key1")?, Some("value1".to_string()));
   assert_eq!(store.get::<_, String>(TEST_CF, "key2")?, Some("value2".to_string()));

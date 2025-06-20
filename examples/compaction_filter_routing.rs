@@ -45,7 +45,8 @@ fn config_value_migrator(_level: u32, key_bytes: &[u8], _value_bytes: &[u8], par
             "[Filter] Changing value for key: {}",
             String::from_utf8_lossy(key_bytes)
           );
-          return RocksDbDecision::ChangeValue(new_value_bytes);
+          let static_slice: &'static [u8] = Box::leak(new_value_bytes.into_boxed_slice());
+          return RocksDbDecision::Change(static_slice);
         }
         Err(e) => {
           eprintln!(
@@ -171,7 +172,7 @@ fn main() -> StoreResult<()> {
   if let Ok(handle) = store.get_cf_handle(APP_DATA_CF) {
     store.db_raw().flush_cf(&handle)?;
     println!("Flushed CF: {}", APP_DATA_CF);
-    store.db_raw().compact_range_cf(&handle, None::<&[u8]>, None::<&[u8]>)?;
+    store.db_raw().compact_range_cf(&handle, None::<&[u8]>, None::<&[u8]>);
     println!("Compacted CF: {}", APP_DATA_CF);
   }
   if let Ok(handle) = store.get_cf_handle(CACHE_CF) {
@@ -179,7 +180,7 @@ fn main() -> StoreResult<()> {
     println!("Flushed CF: {}", CACHE_CF);
     // Wait a tiny moment to ensure time has passed for expiry logic in filter
     thread::sleep(Duration::from_millis(100));
-    store.db_raw().compact_range_cf(&handle, None::<&[u8]>, None::<&[u8]>)?;
+    store.db_raw().compact_range_cf(&handle, None::<&[u8]>, None::<&[u8]>);
     println!("Compacted CF: {}", CACHE_CF);
   }
 
