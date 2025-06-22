@@ -529,7 +529,7 @@ impl CFOperations for RocksDbCFTxnStore {
           raw: base_rocksdb_iter,
           control: effective_control,
           deserializer: deserializer_fn,
-          idx: 0,
+          items_kept_count: 0,
           _phantom_out: std::marker::PhantomData,
         };
         Ok(IterationResult::DeserializedItems(Box::new(iter)))
@@ -541,7 +541,7 @@ impl CFOperations for RocksDbCFTxnStore {
         {
           raw_iter: R,
           control: Option<Box<dyn FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'iter_lt_local>>,
-          current_idx: usize,
+          items_kept_count: usize,
         }
 
         impl<'iter_lt_local, R> Iterator for IterRawInternalLocal<'iter_lt_local, R>
@@ -557,16 +557,15 @@ impl CFOperations for RocksDbCFTxnStore {
                 None => return None,
               };
               if let Some(ref mut ctrl_fn) = self.control {
-                match ctrl_fn(&key_bytes_box, &val_bytes_box, self.current_idx) {
+                match ctrl_fn(&key_bytes_box, &val_bytes_box, self.items_kept_count) {
                   IterationControlDecision::Stop => return None,
                   IterationControlDecision::Skip => {
-                    self.current_idx += 1;
                     continue;
                   }
                   IterationControlDecision::Keep => {}
                 }
               }
-              self.current_idx += 1;
+              self.items_kept_count += 1;
               return Some(Ok((key_bytes_box.into_vec(), val_bytes_box.into_vec())));
             }
           }
@@ -574,24 +573,23 @@ impl CFOperations for RocksDbCFTxnStore {
         let iter_raw_instance = IterRawInternalLocal {
           raw_iter: base_rocksdb_iter,
           control: effective_control,
-          current_idx: 0,
+          items_kept_count: 0,
         };
         Ok(IterationResult::RawItems(Box::new(iter_raw_instance)))
       }
       IterationMode::ControlOnly => {
-        let mut current_idx = 0;
+        let mut items_kept_count = 0;
         if let Some(mut control_fn) = effective_control {
           for res_item in base_rocksdb_iter {
             let (key_bytes, val_bytes) = res_item.map_err(StoreError::RocksDb)?;
-            match control_fn(&key_bytes, &val_bytes, current_idx) {
+            match control_fn(&key_bytes, &val_bytes, items_kept_count) {
               IterationControlDecision::Stop => break,
               IterationControlDecision::Skip => {
-                current_idx += 1;
                 continue;
               }
               IterationControlDecision::Keep => {}
             }
-            current_idx += 1;
+            items_kept_count += 1;
           }
         } else {
           for _ in base_rocksdb_iter {}

@@ -125,7 +125,7 @@ where
   pub(crate) control: Option<Box<dyn FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'iter_lt>>,
   // Deserializer now produces Result<(OutK, OutV), StoreError>
   pub(crate) deserializer: Box<dyn FnMut(&[u8], &[u8]) -> Result<(OutK, OutV), StoreError> + 'iter_lt>,
-  pub(crate) idx: usize,
+  pub(crate) items_kept_count: usize,
   pub(crate) _phantom_out: std::marker::PhantomData<(OutK, OutV)>, // To use OutK, OutV
 }
 
@@ -143,10 +143,9 @@ where
       match self.raw.next() {
         Some(Ok((key_bytes, val_bytes))) => {
           if let Some(ref mut control_fn) = self.control {
-            match control_fn(&key_bytes, &val_bytes, self.idx) {
+            match control_fn(&key_bytes, &val_bytes, self.items_kept_count) {
               IterationControlDecision::Stop => return None,
               IterationControlDecision::Skip => {
-                self.idx += 1;
                 continue;
               }
               IterationControlDecision::Keep => {}
@@ -154,7 +153,7 @@ where
           }
           // Apply deserializer
           let deserialized_item = (self.deserializer)(&key_bytes, &val_bytes);
-          self.idx += 1;
+          self.items_kept_count += 1; 
           return Some(deserialized_item);
         }
         Some(Err(e)) => return Some(Err(StoreError::RocksDb(e))),
