@@ -1,5 +1,3 @@
-// rocksolid/src/tx/cf_tx_store.rs
-
 //! Provides the core CF-aware transactional store, `RocksDbCFTxnStore`.
 
 use crate::bytes::AsBytes;

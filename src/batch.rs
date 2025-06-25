@@ -1,5 +1,3 @@
-// rocksolid/src/batch.rs
-
 use crate::bytes::AsBytes;
 use crate::cf_store::RocksDbCFStore;
 use crate::error::{StoreError, StoreResult};
