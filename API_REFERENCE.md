@@ -16,6 +16,7 @@ This document provides a detailed API reference for the `rocksolid` library.
 11. Utility Functions
 12. Error Handling
 13. Important Constants
+14. DAO Macros
 
 ---
 
@@ -204,7 +205,25 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   Variants: `None` (default), `NaturalLexicographical { ignore_case: bool }` (requires "natlex_sort" feature), `Natural { ignore_case: bool }` (requires "nat_sort" feature).
 
 **Enum `rocksolid::tuner::TuningProfile`**
-*   Variants (each with specific fields, see `src/tuner/profiles.rs`): `LatestValue`, `MemorySaver`, `RealTime`, `TimeSeries`, `SparseBitmap`.
+*Defines a set of pre-configured tuning profiles for RocksDB. Each profile is tailored for specific workload characteristics or goals.*
+*   **`LatestValue { mem_budget_mb_per_cf_hint: usize, use_bloom_filters: bool, enable_compression: bool, io_cap: Option<IoCapOpts> }`**
+    *   Optimized for scenarios where the most recent version of a key is frequently accessed (e.g., caches, session stores). Prioritizes point lookups.
+*   **`MemorySaver { total_mem_mb: usize, db_block_cache_fraction: f64, db_write_buffer_manager_fraction: f64, expected_cf_count_for_write_buffers: usize, enable_light_compression: bool, io_cap: Option<IoCapOpts> }`**
+    *   Aims to minimize RocksDB's memory footprint, suitable for resource-constrained environments.
+*   **`RealTime { total_mem_mb: usize, db_block_cache_fraction: f64, db_write_buffer_manager_fraction: f64, db_background_threads: i32, enable_fast_compression: bool, use_bloom_filters: bool, io_cap: Option<IoCapOpts> }`**
+    *   Optimized for applications requiring low-latency reads and writes, with predictable performance.
+*   **`TimeSeries { mem_budget_mb_per_cf_hint: usize, cf_use_fifo_compaction: bool, cf_fifo_compaction_total_size_mb: Option<usize>, enable_zstd_compression: bool, io_cap: Option<IoCapOpts> }`**
+    *   Optimized for storing time-ordered data where older data might expire or become less relevant.
+*   **`SparseBitmap { mem_budget_mb_per_cf_hint: usize, cf_use_universal_compaction: bool, enable_fast_compression_if_beneficial: bool, io_cap: Option<IoCapOpts> }`**
+    *   Optimized for CFs storing large, merge-heavy values (e.g., Roaring Bitmaps). *Requires a user-configured merge operator.*
+
+**Struct `rocksolid::tuner::profiles::IoCapOpts`**
+*   `pub enable_auto_io_cap: bool`
+*   `pub io_cap_fraction: Option<f64>`
+*   `pub io_cap_level: rocksolid::tuner::profiles::IoCapLevel`
+
+**Enum `rocksolid::tuner::profiles::IoCapLevel`**
+*   Variants: `LowBurst`, `Balanced` (default), `LowLatency`.
 
 **Struct `rocksolid::tx::cf_tx_store::RocksDbCFTxnStoreConfig`**
 *   `pub path: String`
@@ -428,3 +447,40 @@ This document provides a detailed API reference for the `rocksolid` library.
 ## 13. Important Constants
 
 *   **`rocksdb::DEFAULT_COLUMN_FAMILY_NAME: &str`**: Standard name for the default Column Family. (This is from the `rocksdb` crate, directly used or re-exported by `rocksolid`).
+
+---
+
+## 14. DAO Macros
+
+The `rocksolid::macros` module provides a set of helper macros to reduce boilerplate code when creating Data Access Object (DAO) layers.
+
+### Default Column Family Macros
+*For use with `RocksDbStore` or other types implementing `DefaultCFOperations`.*
+
+*   **`generate_dao_get!($rocksdb_store:expr, $key:expr)`**: Gets a single record by key.
+*   **`generate_dao_put!($rocksdb_store:expr, $key:expr, $record:expr)`**: Puts a single record.
+*   **`generate_dao_put_in_txn!($transaction:expr, $key:expr, $record:expr)`**: Puts a single record within a `Tx`.
+*   **`generate_dao_multiget!($rocksdb_store:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records, filtering out non-existent keys.
+*   **`generate_dao_multiget_preserve_order!($rocksdb_store:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records, returning `Option` for each key to preserve order.
+*   **`generate_dao_get_with_expiry!($rocksdb_store:expr, $key:expr)`**: Gets a record with its expiry metadata.
+*   **`generate_dao_put_with_expiry!($rocksdb_store:expr, $key:expr, $record:expr, $expire_time:expr)`**: Puts a record with an expiry time.
+*   **`generate_dao_put_with_expiry_in_txn!($transaction:expr, $key:expr, $record:expr, $expire_time:expr)`**: Puts a record with expiry within a `Tx`.
+*   **`generate_dao_multiget_with_expiry!($rocksdb_store:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records with expiry.
+*   **`generate_dao_merge!($rocksdb_store:expr, $key:expr, $merge_value:expr)`**: Merges a value using a `MergeValue` operand.
+*   **`generate_dao_merge_in_txn!($transaction:expr, $key:expr, $merge_value:expr)`**: Merges a value within a `Tx`.
+*   **`generate_dao_remove!($rocksdb_store:expr, $key:expr)`**: Deletes a single record by key.
+*   **`generate_dao_remove_in_txn!($transaction:expr, $key:expr)`**: Deletes a record within a `Tx`.
+
+### Column Family Specific Macros
+*For use with `RocksDbCFStore` or other types implementing `CFOperations`.*
+
+*   **`generate_dao_get_cf!($cf_store:expr, $cf_name:expr, $key:expr)`**: Gets a record from a specific CF.
+*   **`generate_dao_put_cf!($cf_store:expr, $cf_name:expr, $key:expr, $record:expr)`**: Puts a record into a specific CF.
+*   **`generate_dao_multiget_cf!($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records from a specific CF.
+*   **`generate_dao_multiget_preserve_order_cf!($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records from a specific CF, preserving order.
+*   **`generate_dao_get_with_expiry_cf!($cf_store:expr, $cf_name:expr, $key:expr)`**: Gets a record with expiry from a specific CF.
+*   **`generate_dao_put_with_expiry_cf!($cf_store:expr, $cf_name:expr, $key:expr, $record:expr, $expire_time:expr)`**: Puts a record with expiry into a specific CF.
+*   **`generate_dao_multiget_with_expiry_cf!($cf_store:expr, $cf_name:expr, $record_type:ident, $ids:expr, $id_mapper:expr)`**: Gets multiple records with expiry from a specific CF.
+*   **`generate_dao_merge_cf!($cf_store:expr, $cf_name:expr, $key:expr, $merge_value:expr)`**: Merges a value into a specific CF.
+*   **`generate_dao_remove_cf!($cf_store:expr, $cf_name:expr, $key:expr)`**: Deletes a record from a specific CF.
+*   **`generate_dao_exists_cf!($cf_store:expr, $cf_name:expr, $key:expr)`**: Checks if a key exists in a specific CF.
