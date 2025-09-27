@@ -4,7 +4,12 @@
 
 pub mod cf_tx_store;
 pub mod context;
+pub mod internal;
+pub mod macros;
 pub mod tx_store;
+pub mod optimistic_tx_store;
+pub mod cf_optimistic_tx_store;
+pub mod optimistic_context;
 
 use crate::bytes::AsBytes;
 
@@ -29,6 +34,7 @@ use std::hash::Hash;
 pub use tx_store::RocksDbTxnStore;
 pub use cf_tx_store::RocksDbCFTxnStore;
 pub use context::TransactionContext;
+pub use optimistic_context::OptimisticTransactionContext;
 
 /// Type alias for a `WriteBatch` usable within Transactions (`WriteBatchWithTransaction<true>`).
 /// Often used with Optimistic Transactions, but can sometimes be useful with Pessimistic ones.
@@ -95,5 +101,3 @@ where
   let sk = serialization::serialize_key(key)?;
   txn.delete(sk).map_err(StoreError::RocksDb)
 }
-
-// Add any other original standalone helper functions here...

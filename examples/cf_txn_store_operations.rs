@@ -1,9 +1,8 @@
 use rocksdb::Direction;
-// examples/cf_txn_store_operations.rs
 use rocksolid::config::BaseCfConfig;
 use rocksolid::tx::{
-  cf_tx_store::{CFTxConfig, RocksDbCFTxnStoreConfig},
   RocksDbCFTxnStore,
+  cf_tx_store::{CFTxConfig, RocksDbTransactionalStoreConfig, TransactionalEngine},
 };
 use rocksolid::{CFOperations, StoreResult};
 use serde::{Deserialize, Serialize};
@@ -30,7 +29,7 @@ fn main() -> StoreResult<()> {
   cf_configs.insert(
     CF_MAIN.to_string(),
     CFTxConfig {
-      base_config: BaseCfConfig::default(), // Add tuning or merge ops if needed
+      base_config: BaseCfConfig::default(),
     },
   );
   cf_configs.insert(
@@ -39,12 +38,11 @@ fn main() -> StoreResult<()> {
       base_config: BaseCfConfig::default(),
     },
   );
-  cf_configs.insert(
-    rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), // Good practice to include default
-    CFTxConfig::default(),
-  );
+  cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), CFTxConfig::default());
 
-  let config = RocksDbCFTxnStoreConfig {
+  // --- UPDATED Configuration ---
+  // Use the new unified config struct
+  let config = RocksDbTransactionalStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![
@@ -53,7 +51,8 @@ fn main() -> StoreResult<()> {
       CF_LOGS.to_string(),
     ],
     column_family_configs: cf_configs,
-    txn_db_options: Some(Default::default()), // Default TransactionDBOptions
+    // Specify the engine and provide the options here
+    engine: TransactionalEngine::Pessimistic(Default::default()),
     ..Default::default()
   };
 
@@ -68,6 +67,8 @@ fn main() -> StoreResult<()> {
 
   println!("\nAttempting successful multi-CF transaction...");
   let result: StoreResult<String> = store.execute_transaction(None, |txn| {
+    // NOTE: Assumes `get_in_txn` and `put_in_txn_cf` exist as methods on RocksDbCFTxnStore.
+    // If they were moved to standalone helpers, these calls would be `rocksolid::tx::get_in_txn(...)` etc.
     let current_item: Option<TransactionalItem> = store.get_in_txn(txn, CF_MAIN, &item_id)?;
 
     let new_version = current_item.as_ref().map_or(1, |i| i.version + 1);
@@ -108,7 +109,7 @@ fn main() -> StoreResult<()> {
     CF_MAIN,
     store.get::<_, TransactionalItem>(CF_MAIN, &item_id)?
   );
-  // We can't easily verify the log entry without knowing its exact key, but we can list CF_LOGS
+
   let logs: Vec<(String, String)> = store.find_by_prefix(CF_LOGS, &"log:".to_string(), Direction::Forward)?;
   assert_eq!(logs.len(), 1);
   println!("Found log entry: {:?}", logs.first());
@@ -116,7 +117,7 @@ fn main() -> StoreResult<()> {
   // 4. Demonstrate a transaction that rolls back
   let item_id_fail = "item-002".to_string();
   println!("\nAttempting transaction that will be rolled back...");
-  let rollback_result: Result<TransactionalItem, rocksolid::StoreError> = store.execute_transaction(None, |txn| {
+  let rollback_result: Result<(), rocksolid::StoreError> = store.execute_transaction(None, |txn| {
     let new_item = TransactionalItem {
       id: item_id_fail.clone(),
       version: 1,

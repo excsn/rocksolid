@@ -44,15 +44,16 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   *(Implements `rocksolid::store::DefaultCFOperations`)*
 
 **`rocksolid::tx::cf_tx_store::RocksDbCFTxnStore`**
-*Primary, public, CF-aware handle for a transactional RocksDB database.*
-*   `pub fn open(config: rocksolid::tx::cf_tx_store::RocksDbCFTxnStoreConfig) -> rocksolid::error::StoreResult<Self>`
-*   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::cf_tx_store::RocksDbCFTxnStoreConfig) -> rocksolid::error::StoreResult<()>`
+*Primary, public, CF-aware handle for a **pessimistic** transactional RocksDB database.*
+*   `pub fn open(config: rocksolid::tx::cf_tx_store::RocksDbTransactionalStoreConfig) -> rocksolid::error::StoreResult<Self>`
+*   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::cf_tx_store::RocksDbTransactionalStoreConfig) -> rocksolid::error::StoreResult<()>`
 *   `pub fn path(&self) -> &str`
 *   `pub fn db_txn_raw(&self) -> std::sync::Arc<rocksdb::TransactionDB>`
+*   `pub fn get_cf_handle<'s>(&'s self, cf_name: &str) -> rocksolid::error::StoreResult<std::sync::Arc<rocksdb::BoundColumnFamily<'s>>>`
 *   `pub fn begin_transaction(&self, write_options: Option<rocksdb::WriteOptions>) -> rocksdb::Transaction<'_, rocksdb::TransactionDB>` (aliased as `rocksolid::tx::Tx<'_>`)
 *   `pub fn execute_transaction<F, R>(&self, write_options: Option<rocksdb::WriteOptions>, operation: F) -> rocksolid::error::StoreResult<R>`
     *   where `F: FnOnce(&rocksdb::Transaction<'_, rocksdb::TransactionDB>) -> rocksolid::error::StoreResult<R>`
-*   *(Implements `rocksolid::cf_store::CFOperations` for committed reads/writes. Note: `delete_range` is currently unimplemented for `RocksDbCFTxnStore` when accessed via this trait.)*
+*   *(Implements `rocksolid::cf_store::CFOperations` for committed reads/writes. Note: `delete_range` returns an error for transactional stores.)*
 *   **Transactional Methods (CF-Aware, operating on `txn: &Transaction`):**
     *   `pub fn get_in_txn<'txn, K, V>(&self, txn: &'txn rocksdb::Transaction<'_, rocksdb::TransactionDB>, cf_name: &str, key: K) -> rocksolid::error::StoreResult<Option<V>>`
     *   `pub fn get_raw_in_txn<'txn, K>(&self, txn: &'txn rocksdb::Transaction<'_, rocksdb::TransactionDB>, cf_name: &str, key: K) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
@@ -66,7 +67,7 @@ This document provides a detailed API reference for the `rocksolid` library.
     *   `pub fn merge_raw_in_txn<'txn, K>(&self, txn: &'txn rocksdb::Transaction<'_, rocksdb::TransactionDB>, cf_name: &str, key: K, raw_merge_operand: &[u8]) -> rocksolid::error::StoreResult<()>`
 
 **`rocksolid::tx::tx_store::RocksDbTxnStore`**
-*Convenience wrapper for transactional default CF operations.*
+*Convenience wrapper for **pessimistic** transactional default CF operations.*
 *   `pub fn open(config: rocksolid::tx::tx_store::RocksDbTxnStoreConfig) -> rocksolid::error::StoreResult<Self>`
 *   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::tx_store::RocksDbTxnStoreConfig) -> rocksolid::error::StoreResult<()>`
 *   `pub fn path(&self) -> &str`
@@ -76,6 +77,27 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub fn execute_transaction<F, R>(&self, write_options: Option<rocksdb::WriteOptions>, operation: F) -> rocksolid::error::StoreResult<R>`
     *   where `F: FnOnce(&rocksdb::Transaction<'_, rocksdb::TransactionDB>) -> rocksolid::error::StoreResult<R>`
 *   *(Implements `rocksolid::store::DefaultCFOperations` for committed reads/writes)*
+
+**`rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore`**
+*Primary, public, CF-aware handle for an **optimistic** transactional RocksDB database.*
+*   `pub fn open(config: rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStoreConfig) -> rocksolid::error::StoreResult<Self>`
+*   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStoreConfig) -> rocksolid::error::StoreResult<()>`
+*   `pub fn path(&self) -> &str`
+*   `pub fn db_raw(&self) -> std::sync::Arc<rocksdb::OptimisticTransactionDB>`
+*   `pub fn get_cf_handle<'s>(&'s self, cf_name: &str) -> rocksolid::error::StoreResult<std::sync::Arc<rocksdb::BoundColumnFamily<'s>>>`
+*   `pub fn transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
+*   `pub fn blind_transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
+*   *(Implements `rocksolid::cf_store::CFOperations` for committed reads/writes.)*
+
+**`rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStore`**
+*Convenience wrapper for **optimistic** transactional default CF operations.*
+*   `pub fn open(config: rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStoreConfig) -> rocksolid::error::StoreResult<Self>`
+*   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStoreConfig) -> rocksolid::error::StoreResult<()>`
+*   `pub fn path(&self) -> &str`
+*   `pub fn cf_optimistic_txn_store(&self) -> std::sync::Arc<rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore>`
+*   `pub fn transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
+*   `pub fn blind_transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
+*   *(Implements `rocksolid::store::DefaultCFOperations` for committed reads/writes.)*
 
 ---
 
@@ -112,7 +134,7 @@ This document provides a detailed API reference for the `rocksolid` library.
     *   `K: rocksolid::bytes::AsBytes + std::hash::Hash + Eq + PartialEq + std::fmt::Debug`
 *   `fn delete_range<K>(&self, cf_name: &str, start_key: K, end_key: K) -> rocksolid::error::StoreResult<()>`
     *   `K: rocksolid::bytes::AsBytes + std::hash::Hash + Eq + PartialEq + std::fmt::Debug`
-    *   *(Note: `RocksDbCFTxnStore`'s implementation of this for committed data is `unimplemented!`; use transactions for ranged deletes.)*
+    *   *(Note: Transactional stores return an error for this method.)*
 *   `fn merge<K, PatchVal>(&self, cf_name: &str, key: K, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<()>`
     *   `K: rocksolid::bytes::AsBytes + std::hash::Hash + Eq + PartialEq + std::fmt::Debug`
     *   `PatchVal: serde::Serialize + std::fmt::Debug`
@@ -225,7 +247,7 @@ This document provides a detailed API reference for the `rocksolid` library.
 **Enum `rocksolid::tuner::profiles::IoCapLevel`**
 *   Variants: `LowBurst`, `Balanced` (default), `LowLatency`.
 
-**Struct `rocksolid::tx::cf_tx_store::RocksDbCFTxnStoreConfig`**
+**Struct `rocksolid::tx::cf_tx_store::RocksDbTransactionalStoreConfig`** *(Unified internal config)*
 *   `pub path: String`
 *   `pub create_if_missing: bool`
 *   `pub column_families_to_open: Vec<String>`
@@ -234,10 +256,14 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub parallelism: Option<i32>`
 *   `pub recovery_mode: Option<rocksolid::config::RecoveryMode>`
 *   `pub enable_statistics: Option<bool>`
-*   `pub txn_db_options: Option<rocksdb::TransactionDBOptions>`
+*   `pub engine: rocksolid::tx::cf_tx_store::TransactionalEngine`
 *   `pub custom_options_db_and_cf: rocksolid::tx::cf_tx_store::CustomDbAndCfCb`
 *   `pub type CustomDbAndCfFn = dyn for<'a> Fn(&'a str, &'a mut rocksolid::tuner::Tunable<rocksdb::Options>) + Send + Sync + 'static;`
 *   `pub type CustomDbAndCfCb = Option<Box<CustomDbAndCfFn>>;`
+
+**Enum `rocksolid::tx::cf_tx_store::TransactionalEngine`**
+*   `Pessimistic(rocksdb::TransactionDBOptions)`
+*   `Optimistic`
 
 **Struct `rocksolid::tx::cf_tx_store::CFTxConfig`**
 *   `pub base_config: rocksolid::config::BaseCfConfig`
@@ -255,6 +281,31 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub custom_options_default_cf_and_db: rocksolid::tx::tx_store::CustomDbAndDefaultCb`
 *   `pub type CustomDbAndDefaultFn = dyn for<'a> Fn(&'a str, &'a mut rocksolid::tuner::Tunable<rocksdb::Options>) + Send + Sync + 'static;`
 *   `pub type CustomDbAndDefaultCb = Option<Box<CustomDbAndDefaultFn>>;`
+
+**Struct `rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStoreConfig`**
+*   `pub path: String`
+*   `pub create_if_missing: bool`
+*   `pub column_families_to_open: Vec<String>`
+*   `pub column_family_configs: std::collections::HashMap<String, rocksolid::tx::cf_optimistic_tx_store::CFOptimisticTxnConfig>`
+*   `pub db_tuning_profile: Option<rocksolid::tuner::TuningProfile>`
+*   `pub parallelism: Option<i32>`
+*   `pub recovery_mode: Option<rocksolid::config::RecoveryMode>`
+*   `pub enable_statistics: Option<bool>`
+*   `pub custom_options_db_and_cf: rocksolid::tx::cf_tx_store::CustomDbAndCfCb`
+
+**Struct `rocksolid::tx::cf_optimistic_tx_store::CFOptimisticTxnConfig`**
+*   `pub base_config: rocksolid::config::BaseCfConfig`
+
+**Struct `rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStoreConfig`**
+*   `pub path: String`
+*   `pub create_if_missing: bool`
+*   `pub default_cf_tuning_profile: Option<rocksolid::tuner::TuningProfile>`
+*   `pub default_cf_merge_operator: Option<rocksolid::config::MergeOperatorConfig>`
+*   `pub compaction_filter_router: Option<rocksolid::config::RockSolidCompactionFilterRouterConfig>` (for default CF)
+*   `pub custom_options_default_cf_and_db: rocksolid::tx::tx_store::CustomDbAndDefaultCb`
+*   `pub recovery_mode: Option<rocksolid::config::RecoveryMode>`
+*   `pub parallelism: Option<i32>`
+*   `pub enable_statistics: Option<bool>`
 
 ---
 
@@ -334,6 +385,14 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub fn tx(&self) -> rocksolid::error::StoreResult<&rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
 *   `pub fn tx_mut(&mut self) -> rocksolid::error::StoreResult<&mut rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
 *   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
+*   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
+
+**Struct `rocksolid::tx::optimistic_context::OptimisticTransactionContext<'store>`**
+*   `(crate) fn new(store: &'store rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore) -> Self`
+*   **Default CF Methods:** `set`, `set_raw`, `set_with_expiry`, `merge`, `delete`, `get`, `get_raw`, `get_with_expiry`, `exists`.
+*   **CF-Aware Methods:** `put_cf`, `delete_cf`, `get_cf`.
+*   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
+    *   *Note: Transparently returns conflict errors (`ErrorKind::Busy`) to be handled by the application.*
 *   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
 
 **Static functions in `rocksolid::tx` (for `Tx<'a>` operations on default CF)**

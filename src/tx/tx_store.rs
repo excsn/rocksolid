@@ -2,7 +2,7 @@
 
 //! Provides the public `RocksDbTxnStore` for default Column Family transactional operations.
 
-use super::cf_tx_store::{CFTxConfig, RocksDbCFTxnStore, RocksDbCFTxnStoreConfig};
+use super::cf_tx_store::{CFTxConfig, RocksDbCFTxnStore, RocksDbTransactionalStoreConfig, TransactionalEngine};
 use super::context::TransactionContext;
 use crate::bytes::AsBytes;
 use crate::config::{BaseCfConfig, MergeOperatorConfig, RecoveryMode, RockSolidMergeOperatorCfConfig};
@@ -10,15 +10,16 @@ use crate::error::{StoreError, StoreResult};
 use crate::iter::{IterConfig, IterationResult};
 use crate::store::DefaultCFOperations;
 use crate::tuner::{Tunable, TuningProfile};
+use crate::tx::cf_tx_store::CustomDbAndCfCb;
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
-use crate::{serialization, CFOperations, RockSolidCompactionFilterRouterConfig}; // For direct store methods like set/get on committed state
+use crate::{CFOperations, RockSolidCompactionFilterRouterConfig, serialization}; // For direct store methods like set/get on committed state
 
 use bytevec::ByteDecodable;
 use rocksdb::{
-  Options as RocksDbOptions, Transaction, TransactionDB, TransactionDBOptions,
-  WriteOptions as RocksDbWriteOptions, DEFAULT_COLUMN_FAMILY_NAME,
+  DEFAULT_COLUMN_FAMILY_NAME, Options as RocksDbOptions, Transaction, TransactionDB, TransactionDBOptions,
+  WriteOptions as RocksDbWriteOptions,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::hash::Hash;
 use std::{collections::HashMap, fmt::Debug, path::Path, sync::Arc};
 
@@ -56,7 +57,7 @@ impl Default for RocksDbTxnStoreConfig {
   }
 }
 
-impl From<RocksDbTxnStoreConfig> for RocksDbCFTxnStoreConfig {
+impl From<RocksDbTxnStoreConfig> for RocksDbTransactionalStoreConfig {
   fn from(cfg: RocksDbTxnStoreConfig) -> Self {
     let mut cf_configs = HashMap::new();
     let default_cf_base_config = BaseCfConfig {
@@ -69,7 +70,7 @@ impl From<RocksDbTxnStoreConfig> for RocksDbCFTxnStoreConfig {
           partial_merge_fn: mo_config.partial_merge_fn,
         }),
       comparator: None,
-      compaction_filter_router:cfg.compaction_filter_router,
+      compaction_filter_router: cfg.compaction_filter_router,
     };
     cf_configs.insert(
       rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(),
@@ -78,32 +79,30 @@ impl From<RocksDbTxnStoreConfig> for RocksDbCFTxnStoreConfig {
       },
     );
 
-    let custom_db_and_all_cf_callback: CustomDbAndDefaultCb =
-      if let Some(user_fn) = cfg.custom_options_default_cf_and_db {
-        Some(Box::from(
-          move |cf_name: &str, db_opts: &mut Tunable<RocksDbOptions>| {
-            if cf_name != rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
-              return;
-            }
-
+    let custom_db_and_all_cf_callback: CustomDbAndCfCb = if let Some(user_fn) = cfg.custom_options_default_cf_and_db {
+      Some(Box::from(
+        move |cf_name: &str, db_opts: &mut Tunable<RocksDbOptions>| {
+          // The user's function for the simple store only cares about the default CF.
+          if cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
             user_fn(cf_name, db_opts);
-          },
-        ))
-      } else {
-        None
-      };
+          }
+        },
+      ))
+    } else {
+      None
+    };
 
-    RocksDbCFTxnStoreConfig {
+    RocksDbTransactionalStoreConfig {
       path: cfg.path,
       create_if_missing: cfg.create_if_missing,
       db_tuning_profile: None,
       column_family_configs: cf_configs,
       column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string()],
-      custom_options_db_and_cf: custom_db_and_all_cf_callback,
+      custom_options_db_and_cf: custom_db_and_all_cf_callback, // <-- CORRECTLY POPULATED
       recovery_mode: cfg.recovery_mode,
       parallelism: cfg.parallelism,
       enable_statistics: cfg.enable_statistics,
-      txn_db_options: cfg.txn_db_options,
+      engine: TransactionalEngine::Pessimistic(cfg.txn_db_options.unwrap_or_default()),
     }
   }
 }
@@ -119,7 +118,7 @@ impl RocksDbTxnStore {
       "RocksDbTxnStore: Opening transactional DB at '{}' for default CF.",
       config.path
     );
-    let cf_txn_config: RocksDbCFTxnStoreConfig = config.into();
+    let cf_txn_config: RocksDbTransactionalStoreConfig = config.into();
     let store_impl = RocksDbCFTxnStore::open(cf_txn_config)?;
     Ok(Self {
       cf_store: Arc::new(store_impl),
@@ -127,7 +126,7 @@ impl RocksDbTxnStore {
   }
 
   pub fn destroy(path: &Path, config: RocksDbTxnStoreConfig) -> StoreResult<()> {
-    let cf_txn_config: RocksDbCFTxnStoreConfig = config.into();
+    let cf_txn_config: RocksDbTransactionalStoreConfig = config.into();
     RocksDbCFTxnStore::destroy(path, cf_txn_config)
   }
 

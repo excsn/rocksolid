@@ -83,9 +83,9 @@ impl CompactionFilterRouterBuilder {
 
     if !self.routes_added {
       log::warn!(
-                "Building compaction filter router config ('{}'), but no routes were added. The router will default to 'Keep' for all keys if no pattern matches.",
-                operator_name
-            );
+        "Building compaction filter router config ('{}'), but no routes were added. The router will default to 'Keep' for all keys if no pattern matches.",
+        operator_name
+      );
     }
 
     Ok(RockSolidCompactionFilterRouterConfig {
@@ -108,7 +108,7 @@ pub fn router_compaction_filter_fn(level: u32, key_bytes: &[u8], value_bytes: &[
       let router_guard = COMPACTION_FILTER_ROUTER.read();
       if let Ok(match_result) = router_guard.at(key_str) {
         let handler_arc = match_result.value; // This is Arc<dyn Fn...>
-                                              // Execute the matched handler
+        // Execute the matched handler
         return handler_arc(level, key_bytes, value_bytes, &match_result.params);
       } else {
         // No route matched for this key.
@@ -124,5 +124,17 @@ pub fn router_compaction_filter_fn(level: u32, key_bytes: &[u8], value_bytes: &[
       );
       RocksDbDecision::Keep
     }
+  }
+}
+
+/// **FOR TESTING ONLY**: Clears all registered compaction filter routes.
+///
+/// This function is not thread-safe with other router operations and should only
+/// be used in single-threaded test environments to ensure a clean state.
+pub fn clear_compaction_filter_routes() {
+  #[cfg(feature = "test-utils")]
+  {
+    let mut router_guard = COMPACTION_FILTER_ROUTER.write();
+    *router_guard = Router::new();
   }
 }

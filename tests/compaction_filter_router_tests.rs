@@ -1,16 +1,19 @@
 use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
 use rocksolid::compaction_filter::{CompactionFilterRouteHandlerFn, CompactionFilterRouterBuilder};
 use rocksolid::config::{BaseCfConfig, RockSolidCompactionFilterRouterConfig, RocksDbCFStoreConfig};
+use rocksolid::tuner::Tunable;
 use rocksolid::types::ValueWithExpiry;
-use rocksolid::{serialize_value, StoreResult}; // Assuming deserialize_value is also pub if needed
+use rocksolid::{StoreResult, serialize_value}; // Assuming deserialize_value is also pub if needed
 
 use matchit::Params; // Assuming matchit::Params is used by the handler signature
 use rocksdb::compaction_filter::Decision as RocksDbDecision;
+use rocksdb::{DBCompactionStyle, Options as RocksDbOptions};
+use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 const TEST_CF: &str = "compaction_filter_test_cf";
 
@@ -43,13 +46,24 @@ fn setup_store_with_filter(
   // Always good to have default CF configured, even if not directly used by test logic
   cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), BaseCfConfig::default());
 
-  let store_config = RocksDbCFStoreConfig {
+  let mut store_config = RocksDbCFStoreConfig {
     path: db_path.to_str().unwrap().to_string(),
     create_if_missing: true,
     column_families_to_open: vec![rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), TEST_CF.to_string()],
     column_family_configs: cf_configs,
     ..Default::default()
   };
+
+  // Define a custom options callback to force Universal compaction for our test CF.
+  let custom_opts_fn = Arc::new(
+    move |_: &mut Tunable<RocksDbOptions>, cf_opts_map_tunable: &mut HashMap<String, Tunable<RocksDbOptions>>| {
+      if let Some(test_cf_opts) = cf_opts_map_tunable.get_mut(TEST_CF) {
+        // Use the locking setter to ensure this isn't overridden by a profile.
+        test_cf_opts.inner.set_compaction_style(DBCompactionStyle::Universal);
+      }
+    },
+  );
+  store_config.custom_options_db_and_cf = Some(custom_opts_fn);
 
   let store = RocksDbCFStore::open(store_config)?;
   Ok((store, base_temp_dir)) // Return TempDir to keep it alive
@@ -131,20 +145,28 @@ fn cache_expiry_handler(_level: u32, key_bytes: &[u8], value_bytes: &[u8], _para
 // --- Tests ---
 
 #[test]
+#[serial]
 fn test_compaction_remove_by_prefix() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestRemoveRouter");
   // Route all keys; handler logic will check prefix
-  router_builder.add_route("/*any_pattern", Arc::new(transient_remover_handler))?;
+  router_builder.add_route("{*path}", Arc::new(transient_remover_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_remove_prefix", filter_config)?;
 
-  store.put(TEST_CF, "transient:data1", &"value1".to_string())?;
-  store.put(TEST_CF, "permanent:data2", &"value2".to_string())?;
-
   let cf_handle = store.get_cf_handle(TEST_CF)?;
+
+  // Write and flush the first key to create one SST file.
+  store.put(TEST_CF, "transient:data1", &"value1".to_string())?;
   store.db_raw().flush_cf(&cf_handle)?;
+
+  // Write and flush the second key to create a second SST file.
+  store.put(TEST_CF, "permanent:data2", &"value2".to_string())?;
+  store.db_raw().flush_cf(&cf_handle)?;
+
+  // Now, compacting the range will force RocksDB to merge the two L0 files, triggering the filter.
   store
     .db_raw()
     .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
@@ -158,10 +180,12 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_change_value() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestChangeRouter");
-  router_builder.add_route("/*any_pattern", Arc::new(version_changer_handler))?;
+  router_builder.add_route("{*path}", Arc::new(version_changer_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_change_value", filter_config)?;
@@ -187,11 +211,16 @@ fn test_compaction_change_value() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_non_utf8_key_is_kept() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestNonUtf8Router");
   // A handler that would remove if key matched and was UTF-8
-  router_builder.add_route("/remove_if_match/*path", Arc::new(|_, _, _, _| RocksDbDecision::Remove))?;
+  router_builder.add_route(
+    "/remove_if_match/{*path}",
+    Arc::new(|_, _, _, _| RocksDbDecision::Remove),
+  )?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_non_utf8", filter_config)?;
@@ -221,10 +250,12 @@ fn test_compaction_non_utf8_key_is_kept() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_route_with_parameters() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestParamsRouter");
-  router_builder.add_route("/users/:id/profile", Arc::new(user_profile_param_handler))?;
+  router_builder.add_route("/users/{id}/profile", Arc::new(user_profile_param_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_route_params", filter_config)?;
@@ -252,12 +283,14 @@ fn test_compaction_route_with_parameters() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_expiry_filter() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
   let _ = env_logger::builder().is_test(true).try_init(); // To see println from handler
 
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestExpiryRouter");
-  router_builder.add_route("/cache/:item_id", Arc::new(cache_expiry_handler))?;
+  router_builder.add_route("/cache/{item_id}", Arc::new(cache_expiry_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_expiry_filter", filter_config)?;
@@ -293,7 +326,10 @@ fn test_compaction_expiry_filter() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_default_keep_if_no_route_matches() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
+
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestDefaultKeepRouter");
   // Only one specific route that removes
@@ -325,7 +361,10 @@ fn test_compaction_default_keep_if_no_route_matches() -> StoreResult<()> {
 }
 
 #[test]
+#[serial]
 fn test_compaction_no_routes_configured_keeps_all() -> StoreResult<()> {
+  rocksolid::compaction_filter::clear_compaction_filter_routes();
+
   let _ = env_logger::builder().is_test(true).try_init(); // To see potential warning from build()
 
   let mut router_builder = CompactionFilterRouterBuilder::new();
