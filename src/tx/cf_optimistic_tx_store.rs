@@ -1,5 +1,3 @@
-// rocksolid/src/tx/cf_optimistic_tx_store.rs
-
 //! Provides the core CF-aware optimistic transactional store.
 
 use crate::bytes::AsBytes;
@@ -10,7 +8,8 @@ use crate::iter::{IterConfig, IterationMode, IterationResult};
 use crate::serialization::{deserialize_kv, deserialize_kv_expiry, deserialize_value, serialize_key, serialize_value};
 use crate::tuner::TuningProfile;
 use crate::tx::cf_tx_store::{CustomDbAndCfCb, RocksDbTransactionalStoreConfig, TransactionalEngine};
-use crate::tx::{OptimisticTransactionContext, internal};
+use crate::tx::optimistic::OptimisticTransactionBuilder;
+use crate::tx::{internal, FixedRetry, OptimisticTransactionContext};
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
 
 use bytevec::ByteDecodable;
@@ -196,6 +195,20 @@ impl RocksDbCFOptimisticTxnStore {
   /// **Use with caution.**
   pub fn blind_transaction_context(&self) -> OptimisticTransactionContext<'_> {
     OptimisticTransactionContext::new(self, false) // with_snapshot = false
+  }
+  
+  /// Begins building an optimistic transaction.
+  ///
+  /// Returns a builder that can be used to configure and execute a transaction
+  /// with automatic conflict detection and retries. This pattern is used for
+  /// optimistic concurrency control.
+  ///
+  /// By default, the transaction will use `SnapshotIsolation` for reads and a
+  /// `FixedRetry` policy.
+  pub fn optimistic_transaction(
+    &self,
+  ) -> OptimisticTransactionBuilder<'_, FixedRetry> {
+    OptimisticTransactionBuilder::new(self)
   }
 }
 

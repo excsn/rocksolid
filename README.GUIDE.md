@@ -43,8 +43,10 @@ This guide provides detailed examples and a comprehensive overview of how to use
 
 *   **`RocksDbCFStore`**: Primary non-transactional CF-aware store.
 *   **`RocksDbStore`**: Wrapper for non-transactional default CF operations.
-*   **`RocksDbCFTxnStore`**: Primary transactional CF-aware store.
-*   **`RocksDbTxnStore`**: Wrapper for transactional default CF operations.
+*   **`RocksDbCFTxnStore`**: Primary **pessimistic** transactional CF-aware store.
+*   **`RocksDbTxnStore`**: Wrapper for **pessimistic** transactional default CF operations.
+*   **`RocksDbCFOptimisticTxnStore`**: Primary **optimistic** transactional CF-aware store.
+*   **`RocksDbOptimisticTxnStore`**: Wrapper for **optimistic** transactional default CF operations.
 *   **Column Families (CFs)**: Independent keyspaces within a single RocksDB database. Operations explicitly specify a CF name (e.g., `"my_cf"`, or `rocksdb::DEFAULT_COLUMN_FAMILY_NAME` for the default CF).
 *   **Keys (`SerKey`, `K` types in method signatures)**:
     *   User-provided keys must implement `rocksolid::bytes::AsBytes` (e.g., `String`, `&str`, `Vec<u8>`).
@@ -58,7 +60,9 @@ This guide provides detailed examples and a comprehensive overview of how to use
 *   **`StoreResult<T>`**: Standard `Result<T, StoreError>` for all fallible operations.
 *   **`TuningProfile`**: Pre-defined RocksDB option sets (e.g., `LatestValue`, `MemorySaver`, `TimeSeries`) for common workloads.
 *   **`RockSolidComparatorOpt`**: For configuring custom key sorting logic per CF (e.g., natural sort).
-*   **`TransactionContext<'store>`**: A helper for managing operations within a single pessimistic transaction on the default CF when using `RocksDbTxnStore`. Provides RAII for rollback.
+*   **`TransactionContext<'store>`**: A helper for managing operations within a single **pessimistic** transaction on the default CF when using `RocksDbTxnStore`. Provides RAII for rollback.
+*   **`OptimisticTransactionContext<'store>`**: A helper for managing operations within a single **optimistic** transaction. Does **not** provide automatic retries; application must handle commit conflicts.
+*   **`optimistic_transaction()` Builder**: A fluent API on `RocksDbCFOptimisticTxnStore` for building and executing optimistic transactions with **automatic conflict detection and retries**. This is the recommended approach for optimistic transactions.
 *   **`Tx<'a>`**: An alias for `rocksdb::Transaction<'a, rocksdb::TransactionDB>`, representing a raw pessimistic transaction object.
 *   **`ValueWithExpiry<Val>`**: Struct to store a value along with its Unix timestamp for expiration. Actual data removal requires a compaction filter.
 *   **`MergeValue<PatchVal>`**: Represents a merge operation, combining an operator (e.g., Add, Union) and a patch value.
@@ -225,81 +229,136 @@ fn main() -> StoreResult<()> {
 ---
 
 ## 5. Quick Start: Transactional Usage (CF-Aware)
+
+There are two modes for transactions: Pessimistic (locking) and Optimistic (detect-and-retry).
+
+### Pessimistic (CF-Aware)
+
+Ideal for high-contention workloads where waiting for a lock is better than repeatedly retrying.
+
 ```rust
-use rocksolid::tx::{RocksDbCFTxnStore, cf_tx_store::{RocksDbCFTxnStoreConfig, CFTxConfig}};
+use rocksolid::tx::{RocksDbCFTxnStore, cf_tx_store::{RocksDbTransactionalStoreConfig, CFTxConfig}};
 use rocksolid::config::BaseCfConfig;
 use rocksolid::StoreResult;
-use rocksolid::CFOperations; // For store.get_in_txn, store.put_in_txn_cf
+use rocksolid::CFOperations;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-struct Order { id: String, amount: f64, status: String }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-struct Customer { id: String, loyalty_points: u32 }
+struct Order { id: String, status: String }
 
 const ORDERS_CF: &str = "orders_cf";
-const CUSTOMERS_CF: &str = "customers_cf";
 
 // Operations within a transaction use the provided &Tx object
-fn process_order_and_update_customer(
-    store: &RocksDbCFTxnStore,
-    order_id: &str,
-    new_order_status: &str,
-    customer_id: &str,
-    points_to_add: u32,
-) -> StoreResult<()> {
+fn process_order(store: &RocksDbCFTxnStore, order_id: &str, new_status: &str) -> StoreResult<()> {
     store.execute_transaction(None, |txn| {
-        // Get and update order in ORDERS_CF
         let mut order: Order = store.get_in_txn(txn, ORDERS_CF, order_id)?
-            .ok_or_else(|| StoreResult::Err(rocksolid::StoreError::Other("Order not found".into())))??; // Double ? for Option<Result<T>>
-        order.status = new_order_status.to_string();
+            .ok_or_else(|| rocksolid::StoreError::Other("Order not found".into()))?;
+        order.status = new_status.to_string();
         store.put_in_txn_cf(txn, ORDERS_CF, &order.id, &order)?;
-
-        // Get and update customer in CUSTOMERS_CF
-        let mut customer: Customer = store.get_in_txn(txn, CUSTOMERS_CF, customer_id)?
-            .ok_or_else(|| StoreResult::Err(rocksolid::StoreError::Other("Customer not found".into())))??;
-        customer.loyalty_points += points_to_add;
-        store.put_in_txn_cf(txn, CUSTOMERS_CF, &customer.id, &customer)?;
-
         Ok(()) // Return Ok from the closure to commit
     })
 }
 
 fn main() -> StoreResult<()> {
     let temp_dir = tempdir().expect("Failed to create temp dir");
-    let db_path = temp_dir.path().join("txn_multi_cf_db");
+    let db_path = temp_dir.path().join("pessimistic_cf_db");
 
     let mut cf_configs = HashMap::new();
     cf_configs.insert(ORDERS_CF.to_string(), CFTxConfig { base_config: BaseCfConfig::default() });
-    cf_configs.insert(CUSTOMERS_CF.to_string(), CFTxConfig { base_config: BaseCfConfig::default() });
-    cf_configs.insert(rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(), CFTxConfig::default());
 
-    let config = RocksDbCFTxnStoreConfig {
+    // Use the unified transactional config
+    let config = RocksDbTransactionalStoreConfig {
         path: db_path.to_str().unwrap().to_string(),
         create_if_missing: true,
-        column_families_to_open: vec![
-            rocksdb::DEFAULT_COLUMN_FAMILY_NAME.to_string(),
-            ORDERS_CF.to_string(),
-            CUSTOMERS_CF.to_string(),
-        ],
+        column_families_to_open: vec![ORDERS_CF.to_string()],
         column_family_configs: cf_configs,
+        // Specify the Pessimistic engine
+        engine: rocksolid::tx::cf_tx_store::TransactionalEngine::Pessimistic(Default::default()),
         ..Default::default()
     };
     let cf_txn_store = RocksDbCFTxnStore::open(config)?;
 
-    // Initial setup (auto-committed)
-    cf_txn_store.put(ORDERS_CF, "order123", &Order {id: "order123".into(), amount: 100.0, status: "Pending".into()})?;
-    cf_txn_store.put(CUSTOMERS_CF, "cust456", &Customer {id: "cust456".into(), loyalty_points: 10})?;
+    cf_txn_store.put(ORDERS_CF, "order123", &Order {id: "order123".into(), status: "Pending".into()})?;
+    process_order(&cf_txn_store, "order123", "Shipped")?;
+    println!("Pessimistic CF transaction processed.");
+
+    Ok(())
+}
+```
+
+### Optimistic (CF-Aware)
+
+Ideal for low-contention workloads where transactions rarely conflict. Uses a detect-and-retry pattern.
+
+```rust
+use rocksolid::{
+  tx::{
+    cf_optimistic_tx_store::{RocksDbCFOptimisticTxnStore, RocksDbCFOptimisticTxnStoreConfig},
+    policies::FixedRetry,
+  },
+  CFOperations, StoreError, StoreResult,
+  serialization::{deserialize_value, serialize_value},
+};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use tempfile::tempdir;
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+struct Account { balance: i64, version: u64 }
+
+const ACCOUNTS_CF: &str = "accounts";
+
+fn transfer(store: &RocksDbCFOptimisticTxnStore, from: &str, to: &str, amount: i64) -> StoreResult<()> {
+    store.optimistic_transaction()
+        .with_retry_policy(FixedRetry { max_attempts: 5, backoff: std::time::Duration::from_millis(10) })
+        .execute_with_snapshot(|txn| {
+            let cf_handle = store.get_cf_handle(ACCOUNTS_CF)?;
+            
+            let from_bytes = txn.get_pinned_cf(&cf_handle, from)?.ok_or_else(|| StoreError::Other("from account not found".into()))?;
+            let mut from_acct: Account = deserialize_value(&from_bytes)?;
+            
+            let to_bytes = txn.get_pinned_cf(&cf_handle, to)?.ok_or_else(|| StoreError::Other("to account not found".into()))?;
+            let mut to_acct: Account = deserialize_value(&to_bytes)?;
+
+            if from_acct.balance < amount {
+                return Err(StoreError::Other("Insufficient funds".into()));
+            }
+            from_acct.balance -= amount;
+            from_acct.version += 1;
+            to_acct.balance += amount;
+            to_acct.version += 1;
+
+            txn.put_cf(&cf_handle, from, serialize_value(&from_acct)?)?;
+            txn.put_cf(&cf_handle, to, serialize_value(&to_acct)?)?;
+            Ok(())
+        })
+}
+
+fn main() -> StoreResult<()> {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let db_path = temp_dir.path().join("optimistic_cf_db");
+
+    let mut cf_configs = HashMap::new();
+    cf_configs.insert(ACCOUNTS_CF.to_string(), Default::default());
+
+    let config = RocksDbCFOptimisticTxnStoreConfig {
+        path: db_path.to_str().unwrap().to_string(),
+        column_families_to_open: vec![ACCOUNTS_CF.to_string()],
+        column_family_configs: cf_configs,
+        ..Default::default()
+    };
+    let store = RocksDbCFOptimisticTxnStore::open(config)?;
     
-    process_order_and_update_customer(&cf_txn_store, "order123", "Shipped", "cust456", 5)?;
-    println!("CF-aware transaction processed.");
+    store.put(ACCOUNTS_CF, "acc_a", &Account { balance: 100, version: 1 })?;
+    store.put(ACCOUNTS_CF, "acc_b", &Account { balance: 50, version: 1 })?;
 
-    let final_customer: Option<Customer> = cf_txn_store.get(CUSTOMERS_CF, "cust456")?;
-    println!("Final customer points: {:?}", final_customer.map(|c| c.loyalty_points));
-    assert_eq!(final_customer.unwrap().loyalty_points, 15);
+    transfer(&store, "acc_a", "acc_b", 20)?;
+    println!("Optimistic CF transaction succeeded.");
 
+    let final_b: Account = store.get(ACCOUNTS_CF, "acc_b")?.unwrap();
+    assert_eq!(final_b.balance, 70);
     Ok(())
 }
 ```
@@ -619,12 +678,11 @@ When using `iterate` with a type implementing `DefaultCFOperations`, ensure `Ite
 
 ## 11. Transactional Operations
 
-### `RocksDbCFTxnStore` (CF-Aware Transactions)
+### `RocksDbCFTxnStore` (CF-Aware Pessimistic Transactions)
 *   Implements `CFOperations` for operations on *committed* data (these are auto-committed).
-    *   Note: `delete_range` is not directly available for committed data on transactional stores via this trait.
 *   **Explicit Pessimistic Transactions**:
-    *   `begin_transaction(&self, write_options: Option<rocksdb::WriteOptions>) -> Tx<'_>`: Starts a new transaction. `Tx<'_>` is an alias for `rocksdb::Transaction<'_, rocksdb::TransactionDB>`.
-    *   `execute_transaction<F, R>(&self, write_options: Option<rocksdb::WriteOptions>, operation: F) -> StoreResult<R>`:
+    *   `begin_transaction(&self, ...) -> Tx<'_>`: Starts a new transaction. `Tx<'_>` is an alias for `rocksdb::Transaction<'_, rocksdb::TransactionDB>`.
+    *   `execute_transaction<F, R>(&self, ..., operation: F) -> StoreResult<R>`:
         *   Executes the given closure `operation` within a transaction.
         *   The closure receives `&Tx` and should return `StoreResult<R>`.
         *   Automatically commits if `Ok(R)` is returned, or rolls back if `Err(StoreError)` is returned.
@@ -633,20 +691,32 @@ When using `iterate` with a type implementing `DefaultCFOperations`, ensure `Ite
         *   `put_in_txn_cf<K, V>(&self, txn: &Tx, cf_name: &str, key: K, value: &V) -> StoreResult<()>`
         *   And similar `_raw`, `_with_expiry`, `exists_in_txn`, `delete_in_txn_cf`, `merge_in_txn_cf` variants.
 
-### `RocksDbTxnStore` (Default-CF Focused Transactions)
-*   Implements `DefaultCFOperations` for operations on *committed* data on the default CF (auto-committed).
-*   **Explicit Pessimistic Transactions (primarily for Default CF)**:
+### `RocksDbTxnStore` (Default-CF Focused Pessimistic Transactions)
+*   Implements `DefaultCFOperations` for operations on *committed* data on the default CF.
+*   **Explicit Pessimistic Transactions**:
     *   `transaction_context(&self) -> TransactionContext<'_>`:
         *   Provides a convenient RAII wrapper for a transaction on the default CF.
         *   Methods on `TransactionContext` (`set`, `get`, `delete`, etc.) operate on the default CF within the transaction.
         *   `ctx.commit()?` or `ctx.rollback()?` finalize. Rolls back on drop if not completed.
-    *   `begin_transaction(&self, write_options: Option<rocksdb::WriteOptions>) -> Tx<'_>`: Get a raw `Tx` object for more direct control or for passing to CF-aware methods if needed.
-    *   `execute_transaction<F, R>(...)`: Same as for `RocksDbCFTxnStore`, but typically used with operations on the default CF within the closure.
-    *   **Static helpers in `rocksolid::tx` module**: Can operate on a `&Tx` for default CF, e.g., `rocksolid::tx::get_in_txn(txn, key)`.
-    *   **For CF-aware operations within a transaction started from `RocksDbTxnStore`**:
-        1.  Obtain `txn: Tx<'_>` using `default_txn_store.begin_transaction(...)`.
-        2.  Get the underlying CF-aware store: `let cf_store = default_txn_store.cf_txn_store();`
-        3.  Call CF-aware transactional methods: `cf_store.put_in_txn_cf(&txn, "my_other_cf", ...)`.
+    *   `begin_transaction(...) -> Tx<'_>`: Get a raw `Tx` object for more direct control.
+    *   `execute_transaction(...)`: Same as for `RocksDbCFTxnStore`, but typically used with operations on the default CF.
+
+### `RocksDbCFOptimisticTxnStore` (CF-Aware Optimistic Transactions)
+*   Implements `CFOperations` for operations on *committed* data.
+*   **Recommended: Automatic Retry Builder**:
+    *   `optimistic_transaction(&self) -> OptimisticTransactionBuilder<FixedRetry>`: Returns a builder to construct and execute a transaction with automatic conflict detection and retries. This is the preferred method.
+    *   **Builder Methods**:
+        *   `.with_retry_policy(policy: impl RetryPolicy)`: Use a custom retry strategy (e.g., `NoRetry`, or your own implementation).
+        *   `.execute_with_snapshot(operation: F) -> StoreResult<R>`: Executes the closure `operation`. The closure receives a `&rocksdb::Transaction<'_, OptimisticTransactionDB>` which provides a consistent point-in-time view for reads. If a commit fails due to a conflict, the entire operation is retried according to the policy. This is the safest and most common method.
+        *   `.execute_unisolated(operation: F) -> StoreResult<R>`: Executes the closure without snapshot protection. Reads are not guaranteed to be consistent. Faster but less safe.
+*   **Manual Transaction Management**:
+    *   `transaction_context(&self) -> OptimisticTransactionContext<'_>`: Creates a context for a single transaction attempt with conflict detection enabled.
+    *   `blind_transaction_context(&self) -> OptimisticTransactionContext<'_>`: Creates a context with conflict detection disabled ("last write wins").
+    *   `OptimisticTransactionContext` methods (`set`, `get`, `commit`, `rollback`, etc.) operate on a single attempt. If `.commit()` fails with a conflict error, the **application is responsible for creating a new context and retrying the entire operation**.
+
+### `RocksDbOptimisticTxnStore` (Default-CF Focused Optimistic Transactions)
+*   Implements `DefaultCFOperations` for operations on *committed* data on the default CF.
+*   Provides the same `optimistic_transaction()` builder and manual `transaction_context()` / `blind_transaction_context()` methods as its CF-aware counterpart, but all operations within the transaction contexts (`set`, `get`, etc.) target the default CF.
 
 ---
 
@@ -746,15 +816,3 @@ Compaction filters allow custom logic to be applied to key-value pairs during Ro
     *   `UnknownCf(String)`: Specified Column Family not found or not opened.
     *   `Other(String)`: For miscellaneous library-specific errors.
 *   The `StoreErrorExt` trait provides helpers like `map_to_option` and `map_to_vec` on `StoreResult` to easily convert `NotFound` errors into `Ok(None)` or `Ok(vec![])`.
-
----
-
-## 17. Contributing Focus Areas
-*(This section from your original extended reference is good. It can be included here mostly as-is, or adapted to current project needs.)*
-
-*   **More `TuningProfile`s**: For diverse workloads (e.g., write-heavy append-only logs, specific SSD optimizations).
-*   **Enhanced Iteration**: More sophisticated iterator adapters or query builders.
-*   **Advanced Transaction Features**: Support for optimistic transactions, different isolation levels if exposed by `rust-rocksdb`.
-*   **Metrics & Monitoring Integration**: Hooks or helpers for common metrics systems.
-*   **Benchmarking Suite**: Comprehensive benchmarks for different configurations and workloads.
-*   **Documentation & Examples**: Continuously improving guides and adding more specific examples.

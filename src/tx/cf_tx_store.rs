@@ -1,23 +1,20 @@
 //! Provides the core CF-aware transactional store, `RocksDbCFTxnStore`.
 
 use crate::bytes::AsBytes;
-use crate::config::{BaseCfConfig, RecoveryMode, convert_recovery_mode, default_full_merge, default_partial_merge};
+use crate::config::{BaseCfConfig, RecoveryMode};
 use crate::error::{StoreError, StoreResult};
-use crate::iter::{ControlledIter, IterConfig, IterationMode, IterationResult};
+use crate::iter::{IterConfig, IterationMode, IterationResult};
 use crate::serialization::{deserialize_kv, deserialize_value, serialize_key, serialize_value};
-use crate::tuner::{PatternTuner, Tunable, TuningProfile};
-use crate::tx::internal;
+use crate::tuner::{Tunable, TuningProfile};
+use crate::tx::{internal};
 use crate::types::{IterationControlDecision, MergeValue, ValueWithExpiry};
-use crate::{deserialize_kv_expiry, implement_cf_operations_for_transactional_store, CFOperations};
+use crate::{deserialize_kv_expiry, implement_cf_operations_for_transactional_store};
 
 use bytevec::ByteDecodable;
 use rocksdb::{
-  ColumnFamilyDescriptor,
   DB as StandardDB, // For destroy
   Direction,
-  IteratorMode,
   Options as RocksDbOptions,
-  ReadOptions,
   Transaction,
   TransactionDB,
   TransactionDBOptions,
@@ -171,7 +168,7 @@ impl RocksDbCFTxnStore {
   }
 
   /// Retrieves a shared, bound column family handle.
-  fn get_cf_handle<'s>(&'s self, cf_name: &str) -> StoreResult<Arc<rocksdb::BoundColumnFamily<'s>>> {
+  pub(crate) fn get_cf_handle<'s>(&'s self, cf_name: &str) -> StoreResult<Arc<rocksdb::BoundColumnFamily<'s>>> {
     if !self.cf_names.contains_key(cf_name) {
       // Also check if it's default, as default might not be in cf_names if only named cfs were listed
       // but default is always accessible if db is open.

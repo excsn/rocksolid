@@ -39,6 +39,29 @@ pub enum StoreError {
   Other(String),
 }
 
+impl Clone for StoreError {
+  fn clone(&self) -> Self {
+    match self {
+      // For variants that contain non-cloneable types, we convert them to a String
+      // representation inside the `Other` variant. This preserves the error message.
+      Self::Io(e) => Self::Other(format!("(Cloned) IO error: {}", e)),
+      
+      // For variants that are already cloneable, we clone them directly.
+      Self::RocksDb(e) => Self::RocksDb(e.clone()),
+      Self::Serialization(s) => Self::Serialization(s.clone()),
+      Self::Deserialization(s) => Self::Deserialization(s.clone()),
+      Self::KeyEncoding(s) => Self::KeyEncoding(s.clone()),
+      Self::KeyDecoding(s) => Self::KeyDecoding(s.clone()),
+      Self::InvalidConfiguration(s) => Self::InvalidConfiguration(s.clone()),
+      Self::TransactionRequired => Self::TransactionRequired,
+      Self::NotFound { key } => Self::NotFound { key: key.clone() },
+      Self::MergeError(s) => Self::MergeError(s.clone()),
+      Self::UnknownCf(s) => Self::UnknownCf(s.clone()),
+      Self::Other(s) => Self::Other(s.clone()),
+    }
+  }
+}
+
 // Helper type alias
 pub type StoreResult<T> = Result<T, StoreError>;
 

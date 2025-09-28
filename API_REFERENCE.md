@@ -87,6 +87,7 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub fn get_cf_handle<'s>(&'s self, cf_name: &str) -> rocksolid::error::StoreResult<std::sync::Arc<rocksdb::BoundColumnFamily<'s>>>`
 *   `pub fn transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
 *   `pub fn blind_transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
+*   `pub fn optimistic_transaction(&self) -> rocksolid::tx::optimistic::OptimisticTransactionBuilder<'_, rocksolid::tx::policies::FixedRetry>`
 *   *(Implements `rocksolid::cf_store::CFOperations` for committed reads/writes.)*
 
 **`rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStore`**
@@ -95,6 +96,7 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub fn destroy(path: &std::path::Path, config: rocksolid::tx::optimistic_tx_store::RocksDbOptimisticTxnStoreConfig) -> rocksolid::error::StoreResult<()>`
 *   `pub fn path(&self) -> &str`
 *   `pub fn cf_optimistic_txn_store(&self) -> std::sync::Arc<rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore>`
+*   `pub fn db_raw(&self) -> std::sync::Arc<rocksdb::OptimisticTransactionDB>`
 *   `pub fn transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
 *   `pub fn blind_transaction_context(&self) -> rocksolid::tx::optimistic_context::OptimisticTransactionContext<'_>`
 *   *(Implements `rocksolid::store::DefaultCFOperations` for committed reads/writes.)*
@@ -258,7 +260,7 @@ This document provides a detailed API reference for the `rocksolid` library.
 *   `pub enable_statistics: Option<bool>`
 *   `pub engine: rocksolid::tx::cf_tx_store::TransactionalEngine`
 *   `pub custom_options_db_and_cf: rocksolid::tx::cf_tx_store::CustomDbAndCfCb`
-*   `pub type CustomDbAndCfFn = dyn for<'a> Fn(&'a str, &'a mut rocksolid::tuner::Tunable<rocksdb::Options>) + Send + Sync + 'static;`
+*   `pub type CustomDbAndCfFn = dyn Fn(&mut rocksolid::tuner::Tunable<rocksdb::Options>, &mut std::collections::HashMap<String, rocksolid::tuner::Tunable<rocksdb::Options>>) + Send + Sync + 'static;`
 *   `pub type CustomDbAndCfCb = Option<Box<CustomDbAndCfFn>>;`
 
 **Enum `rocksolid::tx::cf_tx_store::TransactionalEngine`**
@@ -368,32 +370,99 @@ This document provides a detailed API reference for the `rocksolid` library.
 ## 6. Transaction API
 
 **Type Alias `rocksolid::tx::Tx<'a>`** (for `rocksdb::Transaction<'a, rocksdb::TransactionDB>`)
-*   Key `rocksdb::Transaction` methods: `commit()`, `rollback()`, `put(key, value)`, `get(key)`, `delete(key)`, etc. (refer to `rust-rocksdb` docs for full list).
+*   Key `rocksdb::Transaction` methods: `commit()`, `rollback()`, `put(key, value)`, `get(key)`, `delete(key)`, `iterator_cf()`, etc. (refer to `rust-rocksdb` docs for full list).
 
 **Struct `rocksolid::tx::context::TransactionContext<'store>`**
 *   `(crate) fn new(store: &'store rocksolid::tx::cf_tx_store::RocksDbCFTxnStore, write_options: Option<rocksdb::WriteOptions>) -> Self`
-*   `pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn get<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Val>>`
-*   `pub fn get_raw<Key>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
-*   `pub fn get_with_expiry<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<rocksolid::types::ValueWithExpiry<Val>>>`
-*   `pub fn exists<Key>(&self, key: Key) -> rocksolid::error::StoreResult<bool>`
-*   `pub fn delete<Key>(&mut self, key: Key) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
-*   `pub fn tx(&self) -> rocksolid::error::StoreResult<&rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
-*   `pub fn tx_mut(&mut self) -> rocksolid::error::StoreResult<&mut rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
-*   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
-*   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
+*   **Default CF Methods:**
+    *   `pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn get<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Val>>`
+    *   `pub fn get_raw<Key>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
+    *   `pub fn get_with_expiry<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<rocksolid::types::ValueWithExpiry<Val>>>`
+    *   `pub fn exists<Key>(&self, key: Key) -> rocksolid::error::StoreResult<bool>`
+    *   `pub fn delete<Key>(&mut self, key: Key) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+*   **CF-Aware Methods:**
+    *   `pub fn put_cf<Key, Val>(&mut self, cf_name: &str, key: Key, val: &Val) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn put_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_val: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn put_cf_with_expiry<Key, Val>(&mut self, cf_name: &str, key: Key, val: &Val, expire_time: u64) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_cf<Key, PatchVal>(&mut self, cf_name: &str, key: Key, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_merge_op: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn delete_cf<Key>(&mut self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn get_cf<Key, Val>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<Val>>`
+    *   `pub fn get_cf_raw<Key>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
+    *   `pub fn get_cf_with_expiry<Key, Val>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<rocksolid::types::ValueWithExpiry<Val>>>`
+    *   `pub fn exists_cf<Key>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<bool>`
+*   **Iteration Methods (Read-Your-Own-Writes):**
+    *   `pub fn iterate<'txn_lt, SerKey, OutK, OutV>(&'txn_lt self, config: rocksolid::iter::IterConfig<'txn_lt, SerKey, OutK, OutV>) -> Result<rocksolid::iter::IterationResult<'txn_lt, OutK, OutV>, rocksolid::error::StoreError>`
+    *   `pub fn find_by_prefix<Key, Val>(&self, cf_name: &str, prefix: &Key, direction: rocksdb::Direction) -> rocksolid::error::StoreResult<Vec<(Key, Val)>>`
+    *   `pub fn find_from<Key, Val, F>(&self, cf_name: &str, start_key: Key, direction: rocksdb::Direction, control_fn: F) -> rocksolid::error::StoreResult<Vec<(Key, Val)>>`
+    *   `pub fn find_from_with_expire_val<Key, Val, F>(&self, cf_name: &str, start: &Key, reverse: bool, control_fn: F) -> Result<Vec<(Key, rocksolid::types::ValueWithExpiry<Val>)>, String>`
+*   **Control & Access:**
+    *   `pub fn tx(&self) -> rocksolid::error::StoreResult<&rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
+    *   `pub fn tx_mut(&mut self) -> rocksolid::error::StoreResult<&mut rocksdb::Transaction<'store, rocksdb::TransactionDB>>`
+    *   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
+    *   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
 
 **Struct `rocksolid::tx::optimistic_context::OptimisticTransactionContext<'store>`**
-*   `(crate) fn new(store: &'store rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore) -> Self`
-*   **Default CF Methods:** `set`, `set_raw`, `set_with_expiry`, `merge`, `delete`, `get`, `get_raw`, `get_with_expiry`, `exists`.
-*   **CF-Aware Methods:** `put_cf`, `delete_cf`, `get_cf`.
-*   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
-    *   *Note: Transparently returns conflict errors (`ErrorKind::Busy`) to be handled by the application.*
-*   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
+*   `(crate) fn new(store: &'store rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore, with_snapshot: bool) -> Self`
+*   **Default CF Methods:**
+    *   `pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn delete<Key>(&mut self, key: Key) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn get<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Val>>`
+    *   `pub fn get_raw<Key>(&self, key: Key) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
+    *   `pub fn get_with_expiry<Key, Val>(&self, key: Key) -> rocksolid::error::StoreResult<Option<rocksolid::types::ValueWithExpiry<Val>>>`
+    *   `pub fn exists<Key>(&self, key: Key) -> rocksolid::error::StoreResult<bool>`
+*   **CF-Aware Methods:**
+    *   `pub fn put_cf<Key, Val>(&mut self, cf_name: &str, key: Key, val: &Val) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn put_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_val: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn put_cf_with_expiry<Key, Val>(&mut self, cf_name: &str, key: Key, val: &Val, expire_time: u64) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_cf<Key, PatchVal>(&mut self, cf_name: &str, key: Key, merge_value: &rocksolid::types::MergeValue<PatchVal>) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn merge_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_merge_op: &[u8]) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn delete_cf<Key>(&mut self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn get_cf<Key, Val>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<Val>>`
+    *   `pub fn get_cf_raw<Key>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<Vec<u8>>>`
+    *   `pub fn get_cf_with_expiry<Key, Val>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<Option<rocksolid::types::ValueWithExpiry<Val>>>`
+    *   `pub fn exists_cf<Key>(&self, cf_name: &str, key: Key) -> rocksolid::error::StoreResult<bool>`
+*   **Iteration Methods (Read-Your-Own-Writes):**
+    *   `pub fn iterate<'txn_lt, SerKey, OutK, OutV>(&'txn_lt self, config: rocksolid::iter::IterConfig<'txn_lt, SerKey, OutK, OutV>) -> Result<rocksolid::iter::IterationResult<'txn_lt, OutK, OutV>, rocksolid::error::StoreError>`
+    *   `pub fn find_by_prefix<Key, Val>(&self, cf_name: &str, prefix: &Key, direction: rocksdb::Direction) -> rocksolid::error::StoreResult<Vec<(Key, Val)>>`
+    *   `pub fn find_from<Key, Val, F>(&self, cf_name: &str, start_key: Key, direction: rocksdb::Direction, control_fn: F) -> rocksolid::error::StoreResult<Vec<(Key, Val)>>`
+    *   `pub fn find_from_with_expire_val<Key, Val, F>(&self, cf_name: &str, start: &Key, reverse: bool, control_fn: F) -> Result<Vec<(Key, rocksolid::types::ValueWithExpiry<Val>)>, String>`
+*   **Control & Access:**
+    *   `pub fn tx(&self) -> rocksolid::error::StoreResult<&rocksdb::Transaction<'store, rocksdb::OptimisticTransactionDB>>`
+    *   `pub fn tx_mut(&mut self) -> rocksolid::error::StoreResult<&mut rocksdb::Transaction<'store, rocksdb::OptimisticTransactionDB>>`
+    *   `pub fn commit(self) -> rocksolid::error::StoreResult<()>`
+        *   *Note: Transparently returns conflict errors (`ErrorKind::Busy`) to be handled by the application.*
+    *   `pub fn rollback(self) -> rocksolid::error::StoreResult<()>`
+
+**Struct `rocksolid::tx::optimistic::OptimisticTransactionBuilder<'store, RTP>`**
+*Provides a fluent API for executing code with automatic conflict detection and retries against an optimistic transactional database.*
+*   `(crate) fn new(store: &'store rocksolid::tx::cf_optimistic_tx_store::RocksDbCFOptimisticTxnStore) -> Self` (where `RTP = FixedRetry`)
+*   `pub fn with_retry_policy<NRTP: RetryPolicy + Clone>(self, policy: NRTP) -> OptimisticTransactionBuilder<'store, NRTP>`
+*   `pub fn execute_with_snapshot<F, R>(&self, mut operation: F) -> rocksolid::error::StoreResult<R>`
+    *   `F: FnMut(&rocksdb::Transaction<'_, rocksdb::OptimisticTransactionDB>) -> rocksolid::error::StoreResult<R>`
+*   `pub fn execute_unisolated<F, R>(&self, mut operation: F) -> rocksolid::error::StoreResult<R>`
+    *   `F: FnMut(&rocksdb::Transaction<'_, rocksdb::OptimisticTransactionDB>) -> rocksolid::error::StoreResult<R>`
+
+**Trait `rocksolid::tx::optimistic::RetryPolicy`**
+*   `fn should_retry(&self, error: &rocksolid::error::StoreError, attempt: usize) -> rocksolid::error::StoreResult<()>`
+*   **Implementations:** `rocksolid::tx::policies::FixedRetry`, `rocksolid::tx::policies::NoRetry`.
+
+**Trait `rocksolid::tx::extensions::SnapshotExt<S>`** where `S: rocksolid::tx::extensions::HasColumnFamily`
+*   `fn get_cf_deserialized<K, V>(&self, store: &S, cf_name: &str, key: K) -> rocksolid::error::StoreResult<Option<V>>`
+    *   *Implemented for snapshots from both `TransactionDB` and `OptimisticTransactionDB`.*
+
+**Trait `rocksolid::tx::extensions::WriteBatchExt<S>`** where `S: rocksolid::tx::extensions::HasColumnFamily`
+*   `fn put_cf_serialized<K, V>(&mut self, store: &S, cf_name: &str, key: K, value: &V) -> rocksolid::error::StoreResult<()>`
+*   `fn delete_cf_key<K>(&mut self, store: &S, cf_name: &str, key: K) -> rocksolid::error::StoreResult<()>`
 
 **Static functions in `rocksolid::tx` (for `Tx<'a>` operations on default CF)**
 *   `pub fn get_in_txn<K, V>(txn: &rocksolid::tx::Tx, key: K) -> rocksolid::error::StoreResult<Option<V>>`

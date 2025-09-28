@@ -6,6 +6,8 @@ pub mod cf_tx_store;
 pub mod context;
 pub mod internal;
 pub mod macros;
+pub mod optimistic;
+pub mod policies;
 pub mod tx_store;
 pub mod optimistic_tx_store;
 pub mod cf_optimistic_tx_store;
@@ -35,6 +37,9 @@ pub use tx_store::RocksDbTxnStore;
 pub use cf_tx_store::RocksDbCFTxnStore;
 pub use context::TransactionContext;
 pub use optimistic_context::OptimisticTransactionContext;
+
+pub use optimistic::{RetryPolicy};
+pub use policies::{FixedRetry, NoRetry,};
 
 /// Type alias for a `WriteBatch` usable within Transactions (`WriteBatchWithTransaction<true>`).
 /// Often used with Optimistic Transactions, but can sometimes be useful with Pessimistic ones.

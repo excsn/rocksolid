@@ -1,12 +1,11 @@
 [package]
 name = "rocksolid"
-version = "2.5.0"
+version = "2.5.1"
 edition = "2024"
 authors = ["Excerion Sun <dev@excsn.com>"]
 license = "MPL-2.0"
 
-# Metadata for crates.io
-description = "An ergonomic persistence layer over RocksDB, offering Column Family support, transactions (CF-aware), batching, merge routing, value expiry, and performance tuning."
+description = "An ergonomic, high-level RocksDB wrapper for Rust. Features CF-aware optimistic & pessimistic transactions, advanced routing for merge operators and compaction filters, performance tuning profiles, batching, TTL values, and DAO macros."
 readme = "README.md"
 repository = "https://github.com/excsn/rocksolid"
 documentation = "https://docs.rs/rocksolid"
