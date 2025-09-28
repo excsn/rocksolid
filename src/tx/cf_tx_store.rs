@@ -3,7 +3,8 @@
 use crate::bytes::AsBytes;
 use crate::config::{BaseCfConfig, RecoveryMode};
 use crate::error::{StoreError, StoreResult};
-use crate::iter::{IterConfig, IterationMode, IterationResult};
+use crate::iter::{IterConfig, IterationResult};
+use crate::iter::helpers::{IterationHelper, GeneralFactory, PrefixFactory};
 use crate::serialization::{deserialize_kv, deserialize_value, serialize_key, serialize_value};
 use crate::tuner::{Tunable, TuningProfile};
 use crate::tx::{internal};
@@ -20,6 +21,7 @@ use rocksdb::{
   TransactionDBOptions,
   TransactionOptions,
   WriteOptions as RocksDbWriteOptions,
+  ReadOptions,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use std::hash::Hash;

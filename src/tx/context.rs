@@ -4,12 +4,13 @@
 use super::cf_tx_store::RocksDbCFTxnStore;
 use crate::bytes::AsBytes;
 use crate::error::{StoreError, StoreResult};
+use crate::iter::helpers::{GeneralFactory, IterationHelper, PrefixFactory};
 use crate::iter::{ControlledIter, IterConfig, IterationMode, IterationResult};
 use crate::types::{MergeValue, ValueWithExpiry};
 use crate::{IterationControlDecision, deserialize_kv, deserialize_kv_expiry, serialization};
 
 use bytevec::ByteDecodable;
-use rocksdb::{Direction, Transaction, TransactionDB, WriteOptions as RocksDbWriteOptions};
+use rocksdb::{Direction, ReadOptions, Transaction, TransactionDB, WriteOptions as RocksDbWriteOptions};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -367,7 +368,7 @@ impl<'store> TransactionContext<'store> {
     Ok(())
   }
 
-  // --- NEW: Iteration Methods ---
+  // --- Iteration Methods ---
 
   /// General purpose iteration method that operates within the transaction.
   ///
@@ -380,160 +381,42 @@ impl<'store> TransactionContext<'store> {
   /// - `IterationMode::ControlOnly`: Returns `IterationResult::EffectCompleted`.
   pub fn iterate<'txn_lt, SerKey, OutK, OutV>(
     &'txn_lt self,
-    mut config: IterConfig<'txn_lt, SerKey, OutK, OutV>,
+    config: IterConfig<'txn_lt, SerKey, OutK, OutV>,
   ) -> Result<IterationResult<'txn_lt, OutK, OutV>, StoreError>
   where
     SerKey: AsBytes + Hash + Eq + PartialEq + Debug,
     OutK: DeserializeOwned + Debug + 'txn_lt,
     OutV: DeserializeOwned + Debug + 'txn_lt,
   {
+    // --- REPLACE THE ENTIRE METHOD BODY WITH THIS ---
     self.check_completed()?;
+    let cf_name_for_general = config.cf_name.clone();
+    let cf_name_for_prefix = config.cf_name.clone();
 
-    let ser_prefix_bytes = config
-      .prefix
-      .as_ref()
-      .map(|k| serialization::serialize_key(k))
-      .transpose()?;
-    let ser_start_bytes = config
-      .start
-      .as_ref()
-      .map(|k| serialization::serialize_key(k))
-      .transpose()?;
-
-    let iteration_direction = if config.reverse {
-      Direction::Reverse
-    } else {
-      Direction::Forward
-    };
-
-    let rocksdb_iterator_mode = if let Some(start_key_bytes_ref) = ser_start_bytes.as_ref() {
-      rocksdb::IteratorMode::From(start_key_bytes_ref.as_ref(), iteration_direction)
-    } else if let Some(prefix_key_bytes_ref) = ser_prefix_bytes.as_ref() {
-      rocksdb::IteratorMode::From(prefix_key_bytes_ref.as_ref(), iteration_direction)
-    } else if config.reverse {
-      rocksdb::IteratorMode::End
-    } else {
-      rocksdb::IteratorMode::Start
-    };
-
-    let read_opts = rocksdb::ReadOptions::default();
-
-    let base_rocksdb_iter: Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'txn_lt> =
-      if let Some(prefix_bytes_ref) = ser_prefix_bytes.as_ref() {
-        if config.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
-          Box::new(self.txn.prefix_iterator(prefix_bytes_ref))
+    let general_iterator_factory: GeneralFactory<'txn_lt> = Box::new(move |mode| {
+      let read_opts = ReadOptions::default();
+      let iter: Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'txn_lt> =
+        if cf_name_for_general == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+          Box::new(self.txn.iterator_opt(mode, read_opts))
         } else {
-          let handle = self.store.get_cf_handle(&config.cf_name)?;
-          Box::new(self.txn.prefix_iterator_cf(&handle, prefix_bytes_ref))
-        }
-      } else {
-        if config.cf_name == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
-          Box::new(self.txn.iterator_opt(rocksdb_iterator_mode, read_opts))
-        } else {
-          let handle = self.store.get_cf_handle(&config.cf_name)?;
-          Box::new(self.txn.iterator_cf_opt(&handle, read_opts, rocksdb_iterator_mode))
-        }
-      };
-
-    let mut effective_control = config.control.take();
-    if let Some(p_bytes_captured) = ser_prefix_bytes.clone() {
-      let prefix_enforcement_control = Box::new(move |key_bytes: &[u8], _value_bytes: &[u8], _idx: usize| {
-        if key_bytes.starts_with(&p_bytes_captured) {
-          IterationControlDecision::Keep
-        } else {
-          IterationControlDecision::Stop
-        }
-      });
-      if let Some(mut user_control) = effective_control.take() {
-        effective_control =
-          Some(Box::new(
-            move |key_bytes: &[u8], value_bytes: &[u8], idx: usize| match prefix_enforcement_control(
-              key_bytes,
-              value_bytes,
-              idx,
-            ) {
-              IterationControlDecision::Keep => user_control(key_bytes, value_bytes, idx),
-              decision => decision,
-            },
-          ));
-      } else {
-        effective_control = Some(prefix_enforcement_control);
-      }
-    }
-
-    match config.mode {
-      IterationMode::Deserialize(deserializer_fn) => {
-        let iter = ControlledIter {
-          raw: base_rocksdb_iter,
-          control: effective_control,
-          deserializer: deserializer_fn,
-          items_kept_count: 0,
-          _phantom_out: std::marker::PhantomData,
+          let handle = self.store.get_cf_handle(&cf_name_for_general)?;
+          Box::new(self.txn.iterator_cf_opt(&handle, read_opts, mode))
         };
-        Ok(IterationResult::DeserializedItems(Box::new(iter)))
-      }
-      IterationMode::Raw => {
-        // THIS IS THE FIX: Replicate the inline struct from cf_store.rs
-        struct IterRawInternalLocal<'iter_lt_local, R>
-        where
-          R: Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'iter_lt_local,
-        {
-          raw_iter: R,
-          control: Option<Box<dyn FnMut(&[u8], &[u8], usize) -> IterationControlDecision + 'iter_lt_local>>,
-          items_kept_count: usize,
-        }
+      Ok(iter)
+    });
 
-        impl<'iter_lt_local, R> Iterator for IterRawInternalLocal<'iter_lt_local, R>
-        where
-          R: Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'iter_lt_local,
-        {
-          type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
-          fn next(&mut self) -> Option<Self::Item> {
-            loop {
-              let (key_bytes_box, val_bytes_box) = match self.raw_iter.next() {
-                Some(Ok(kv_pair)) => kv_pair,
-                Some(Err(e)) => return Some(Err(StoreError::RocksDb(e))),
-                None => return None,
-              };
-              if let Some(ref mut ctrl_fn) = self.control {
-                match ctrl_fn(&key_bytes_box, &val_bytes_box, self.items_kept_count) {
-                  IterationControlDecision::Stop => return None,
-                  IterationControlDecision::Skip => {
-                    continue;
-                  }
-                  IterationControlDecision::Keep => {}
-                }
-              }
-              self.items_kept_count += 1;
-              return Some(Ok((key_bytes_box.into_vec(), val_bytes_box.into_vec())));
-            }
-          }
-        }
-        let iter_raw_instance = IterRawInternalLocal {
-          raw_iter: base_rocksdb_iter,
-          control: effective_control,
-          items_kept_count: 0,
-        };
-        Ok(IterationResult::RawItems(Box::new(iter_raw_instance)))
-      }
-      IterationMode::ControlOnly => {
-        let mut items_kept_count = 0;
-        if let Some(mut control_fn) = effective_control {
-          for res_item in base_rocksdb_iter {
-            let (key_bytes, val_bytes) = res_item.map_err(StoreError::RocksDb)?;
-            match control_fn(&key_bytes, &val_bytes, items_kept_count) {
-              IterationControlDecision::Stop => break,
-              IterationControlDecision::Skip => continue,
-              IterationControlDecision::Keep => {}
-            }
-            items_kept_count += 1;
-          }
+    let prefix_iterator_factory: PrefixFactory<'txn_lt> = Box::new(move |prefix_bytes: &[u8]| {
+      let iter: Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'txn_lt> =
+        if cf_name_for_prefix == rocksdb::DEFAULT_COLUMN_FAMILY_NAME {
+          Box::new(self.txn.prefix_iterator(prefix_bytes))
         } else {
-          for _ in base_rocksdb_iter {}
-        }
-        Ok(IterationResult::EffectCompleted)
-      }
-    }
+          let handle = self.store.get_cf_handle(&cf_name_for_prefix)?;
+          Box::new(self.txn.prefix_iterator_cf(&handle, prefix_bytes))
+        };
+      Ok(iter)
+    });
+
+    IterationHelper::new(config, general_iterator_factory, prefix_iterator_factory).execute()
   }
 
   /// Finds key-value pairs by key prefix within the transaction.
