@@ -43,6 +43,8 @@ impl MergeRouterBuilder {
   }
 
   /// Adds a route handler for the **full merge** operation to the static router.
+  /// # Arguments
+  /// * `route_pattern` - A `matchit` compatible route pattern (e.g., "/data/user/{id}", "prefix/{*path}").
   pub fn add_full_merge_route(
     &mut self,
     route_pattern: &str,
@@ -62,6 +64,8 @@ impl MergeRouterBuilder {
   }
 
   /// Adds a route handler for the **partial merge** operation to the static router.
+  /// # Arguments
+  /// * `route_pattern` - A `matchit` compatible route pattern (e.g., "/data/user/{id}", "prefix/{*path}").
   pub fn add_partial_merge_route(
     &mut self,
     route_pattern: &str,
@@ -82,6 +86,8 @@ impl MergeRouterBuilder {
 
   /// Adds route handlers for **both full and partial merge** operations under a single pattern
   /// to the static routers. Use `None` for default behavior.
+  /// # Arguments
+  /// * `route_pattern` - A `matchit` compatible route pattern (e.g., "/data/user/{id}", "prefix/{*path}").
   pub fn add_route(
     &mut self,
     route_pattern: &str,

@@ -51,7 +51,7 @@ impl CompactionFilterRouterBuilder {
   /// This implies that keys intended for routing should be UTF-8 compatible.
   ///
   /// # Arguments
-  /// * `route_pattern` - A `matchit` compatible route pattern (e.g., "/data/user/:id", "prefix/*").
+  /// * `route_pattern` - A `matchit` compatible route pattern (e.g., "/data/user/{id}", "prefix/{*path}").
   /// * `handler` - The function to execute when a key matches this pattern during compaction.
   pub fn add_route(&mut self, route_pattern: &str, handler: CompactionFilterRouteHandlerFn) -> StoreResult<&mut Self> {
     let mut router_guard = COMPACTION_FILTER_ROUTER.write();

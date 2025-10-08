@@ -1,11 +1,11 @@
 use rocksolid::cf_store::{CFOperations, RocksDbCFStore};
-use rocksolid::compaction_filter::{CompactionFilterRouteHandlerFn, CompactionFilterRouterBuilder};
+use rocksolid::compaction_filter::CompactionFilterRouterBuilder;
 use rocksolid::config::{BaseCfConfig, RockSolidCompactionFilterRouterConfig, RocksDbCFStoreConfig};
 use rocksolid::tuner::Tunable;
 use rocksolid::types::ValueWithExpiry;
-use rocksolid::{StoreResult, serialize_value}; // Assuming deserialize_value is also pub if needed
+use rocksolid::{StoreResult, serialize_value};
 
-use matchit::Params; // Assuming matchit::Params is used by the handler signature
+use matchit::Params;
 use rocksdb::compaction_filter::Decision as RocksDbDecision;
 use rocksdb::{DBCompactionStyle, Options as RocksDbOptions};
 use serial_test::serial;
