@@ -1,11 +1,13 @@
-// rocksolid/src/utils.rs
+#[cfg(feature = "base62")]
+pub mod base62;
 
-use crate::cf_store::RocksDbCFStore; // Use RocksDbCFStore
-use crate::config::RocksDbCFStoreConfig; // Use RocksDbCFStoreConfig
+use crate::cf_store::RocksDbCFStore;
+use crate::config::RocksDbCFStoreConfig;
 use crate::error::{StoreError, StoreResult};
 use crate::CFOperations;
+
 use log::{error, info, warn};
-use rocksdb::{checkpoint::Checkpoint, IteratorMode, ReadOptions, DB}; // DB for list_cf
+use rocksdb::{checkpoint::Checkpoint, IteratorMode, ReadOptions, DB};
 use std::path::Path;
 
 /// Migrates data from a source RocksDB database to a destination RocksDB database,

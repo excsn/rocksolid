@@ -1,6 +1,6 @@
 [package]
 name = "rocksolid"
-version = "2.5.3"
+version = "2.5.4"
 edition = "2024"
 authors = ["Excerion Sun <dev@excsn.com>"]
 license = "MPL-2.0"
@@ -13,6 +13,7 @@ keywords = ["rocksdb", "database", "kv-store", "transaction", "batch"]
 categories = ["database", "database-implementations"]
 
 [dependencies]
+base62 = { version = "2", optional = true }
 bytevec = "^0.2"
 either = "1.8"
 log = "^0.4"
@@ -37,7 +38,7 @@ serial_test = "3.2.0"
 tempfile = "^3.3"
 
 [features]
-full = ["default", "snappy", "zstd", "zlib", "bzip2", "natlex_sort", "nat_sort"]
+full = ["default", "base62", "snappy", "zstd", "zlib", "bzip2", "natlex_sort", "nat_sort"]
 default = ["multi-threaded-cf", "lz4"]
 multi-threaded-cf = ["rocksdb/multi-threaded-cf"]
 lz4 = ["rocksdb/lz4"]
@@ -49,3 +50,4 @@ bzip2 = ["rocksdb/bzip2"]
 natlex_sort = ["dep:natlex_sort"]
 nat_sort = ["dep:natord"]
 test-utils = []
+base62 = ["dep:base62"]

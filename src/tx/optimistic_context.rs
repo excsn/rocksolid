@@ -88,7 +88,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   // --- Write Methods (Default CF) ---
 
   /// Stages a `put` operation on the default Column Family.
-  pub fn set<Key, Val>(&mut self, key: Key, val: &Val) -> StoreResult<&mut Self>
+  pub fn set<Key, Val>(&self, key: Key, val: &Val) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + Debug,
@@ -101,7 +101,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `put` operation with a raw byte value on the default Column Family.
-  pub fn set_raw<Key>(&mut self, key: Key, raw_val: &[u8]) -> StoreResult<&mut Self>
+  pub fn set_raw<Key>(&self, key: Key, raw_val: &[u8]) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
@@ -112,7 +112,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `put` operation with an expiry time on the default Column Family.
-  pub fn set_with_expiry<Key, Val>(&mut self, key: Key, val: &Val, expire_time: u64) -> StoreResult<&mut Self>
+  pub fn set_with_expiry<Key, Val>(&self, key: Key, val: &Val, expire_time: u64) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
@@ -125,7 +125,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `merge` operation on the default Column Family.
-  pub fn merge<Key, PatchVal>(&mut self, key: Key, merge_value: &MergeValue<PatchVal>) -> StoreResult<&mut Self>
+  pub fn merge<Key, PatchVal>(&self, key: Key, merge_value: &MergeValue<PatchVal>) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
@@ -138,7 +138,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `merge` operation with a raw byte value on the default Column Family.
-  pub fn merge_raw<Key>(&mut self, key: Key, raw_merge_op: &[u8]) -> StoreResult<&mut Self>
+  pub fn merge_raw<Key>(&self, key: Key, raw_merge_op: &[u8]) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
@@ -149,7 +149,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `delete` operation on the default Column Family.
-  pub fn delete<Key>(&mut self, key: Key) -> StoreResult<&mut Self>
+  pub fn delete<Key>(&self, key: Key) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
@@ -208,7 +208,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   // --- Write Methods (CF-Aware) ---
 
   /// Stages a `put` operation on a named Column Family.
-  pub fn put_cf<Key, Val>(&mut self, cf_name: &str, key: Key, val: &Val) -> StoreResult<&mut Self>
+  pub fn put_cf<Key, Val>(&self, cf_name: &str, key: Key, val: &Val) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + Debug,
@@ -222,7 +222,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `put` operation with a raw byte value on a named Column Family.
-  pub fn put_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_val: &[u8]) -> StoreResult<&mut Self>
+  pub fn put_cf_raw<Key>(&self, cf_name: &str, key: Key, raw_val: &[u8]) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
@@ -235,12 +235,12 @@ impl<'store> OptimisticTransactionContext<'store> {
 
   /// Stages a `put` operation with an expiry time on a named Column Family.
   pub fn put_cf_with_expiry<Key, Val>(
-    &mut self,
+    &self,
     cf_name: &str,
     key: Key,
     val: &Val,
     expire_time: u64,
-  ) -> StoreResult<&mut Self>
+  ) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     Val: Serialize + DeserializeOwned + Debug,
@@ -253,11 +253,11 @@ impl<'store> OptimisticTransactionContext<'store> {
 
   /// Stages a `merge` operation on a named Column Family.
   pub fn merge_cf<Key, PatchVal>(
-    &mut self,
+    &self,
     cf_name: &str,
     key: Key,
     merge_value: &MergeValue<PatchVal>,
-  ) -> StoreResult<&mut Self>
+  ) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
     PatchVal: Serialize + Debug,
@@ -271,7 +271,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `merge` operation with a raw byte value on a named Column Family.
-  pub fn merge_cf_raw<Key>(&mut self, cf_name: &str, key: Key, raw_merge_op: &[u8]) -> StoreResult<&mut Self>
+  pub fn merge_cf_raw<Key>(&self, cf_name: &str, key: Key, raw_merge_op: &[u8]) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
@@ -283,7 +283,7 @@ impl<'store> OptimisticTransactionContext<'store> {
   }
 
   /// Stages a `delete` operation on a named Column Family.
-  pub fn delete_cf<Key>(&mut self, cf_name: &str, key: Key) -> StoreResult<&mut Self>
+  pub fn delete_cf<Key>(&self, cf_name: &str, key: Key) -> StoreResult<&Self>
   where
     Key: AsBytes + Hash + Eq + PartialEq + Debug,
   {
