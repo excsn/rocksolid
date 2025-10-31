@@ -475,6 +475,16 @@ This document provides a detailed API reference for the `rocksolid` library.
 
 ## 7. Compaction Filter API
 
+`rocksolid` provides two powerful, rule-based compaction filter mechanisms to automatically clean up data during RocksDB's background compaction process. This is far more efficient than manually scanning and deleting old data.
+
+You choose the appropriate router based on your key format:
+*   **`CompactionFilterRouterBuilder`**: For keys that are guaranteed to be valid **UTF-8 strings**. It uses flexible string patterns for routing.
+*   **`BinaryCompactionFilterBuilder`**: For keys that contain **raw binary data**. It uses efficient byte-prefix matching for routing.
+
+### 7.1. String-Based Router (`CompactionFilterRouterBuilder`)
+
+Use this router when your keys are human-readable strings (e.g., `user:123`, `paxos/data/my-key`).
+
 **Module `rocksolid::compaction_filter`**
 *   **Struct `CompactionFilterRouterBuilder`**
     *   `pub fn new() -> Self`
@@ -483,8 +493,23 @@ This document provides a detailed API reference for the `rocksolid` library.
     *   `pub fn build(self) -> rocksolid::error::StoreResult<rocksolid::config::RockSolidCompactionFilterRouterConfig>`
 *   **Type Alias `CompactionFilterRouteHandlerFn`**
     *   `= std::sync::Arc<dyn Fn(u32, &[u8], &[u8], &matchit::Params) -> rocksdb::compaction_filter::Decision + Send + Sync + 'static>`
-*   **Function `router_compaction_filter_fn`** (The main filter function used by `RockSolidCompactionFilterRouterConfig`)
+*   **Function `router_compaction_filter_fn`** (The main filter function used by `RockSolidCompactionFilterRouterConfig` when built with this builder)
     *   `pub fn router_compaction_filter_fn(level: u32, key_bytes: &[u8], value_bytes: &[u8]) -> rocksdb::compaction_filter::Decision`
+
+### 7.2. Binary Prefix Router (`BinaryCompactionFilterBuilder`)
+
+Use this router when your keys contain non-UTF-8 binary data, such as raw ULIDs, hashes, or serialized protobufs (e.g., `log/<16-byte-ULID>`, `set/my_set/<raw-bytes>`).
+
+**Module `rocksolid::compaction_filter::binary`**
+*   **Struct `BinaryCompactionFilterBuilder`**
+    *   `pub fn new() -> Self`
+    *   `pub fn operator_name(&mut self, name: impl Into<String>) -> &mut Self`
+    *   `pub fn add_prefix_route(&mut self, prefix: &[u8], handler: BinaryCompactionFilterHandlerFn) -> rocksolid::error::StoreResult<&mut Self>`
+    *   `pub fn build(self) -> rocksolid::error::StoreResult<rocksolid::config::RockSolidCompactionFilterRouterConfig>`
+*   **Type Alias `BinaryCompactionFilterHandlerFn`**
+    *   `= std::sync::Arc<dyn Fn(u32, &[u8], &[u8]) -> rocksdb::compaction_filter::Decision + Send + Sync + 'static>`
+*   **Function `binary_router_fn`** (The main filter function used by `RockSolidCompactionFilterRouterConfig` when built with this builder)
+    *   `pub fn binary_router_fn(level: u32, key_bytes: &[u8], value_bytes: &[u8]) -> rocksdb::compaction_filter::Decision`
 
 ---
 

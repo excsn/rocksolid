@@ -1,6 +1,6 @@
 [package]
 name = "rocksolid"
-version = "2.5.4"
+version = "2.5.5"
 edition = "2024"
 authors = ["Excerion Sun <dev@excsn.com>"]
 license = "MPL-2.0"
@@ -16,6 +16,7 @@ categories = ["database", "database-implementations"]
 base62 = { version = "2", optional = true }
 bytevec = "^0.2"
 either = "1.8"
+fast_radix_trie = "1.0.0"
 log = "^0.4"
 matchit = "^0.8"
 natlex_sort = { version = "^0.1", optional = true }
@@ -51,3 +52,13 @@ natlex_sort = ["dep:natlex_sort"]
 nat_sort = ["dep:natord"]
 test-utils = []
 base62 = ["dep:base62"]
+
+[[test]]
+name = "cf_integration"
+path = "tests/cf_integration.rs"
+required-features = ["zstd"]
+
+[[test]]
+name = "binary_compaction_filter"
+path = "tests/binary_compaction_filter.rs"
+required-features = ["base62"]

@@ -73,7 +73,7 @@ fn setup_store_with_filter(
 
 // Handler 1: Removes keys prefixed with "transient:"
 fn transient_remover_handler(_level: u32, key_bytes: &[u8], _value_bytes: &[u8], _params: &Params) -> RocksDbDecision {
-  if key_bytes.starts_with(b"transient:") {
+  if key_bytes.starts_with(b"/transient/") {
     RocksDbDecision::Remove
   } else {
     RocksDbDecision::Keep
@@ -82,7 +82,7 @@ fn transient_remover_handler(_level: u32, key_bytes: &[u8], _value_bytes: &[u8],
 
 // Handler 2: Changes value of "version:key" to "compacted_v2"
 fn version_changer_handler(_level: u32, key_bytes: &[u8], _value_bytes: &[u8], _params: &Params) -> RocksDbDecision {
-  if key_bytes == b"version:key" {
+  if key_bytes == b"/version/key" {
     // Ensure serialize_value is accessible and works as expected
     let new_value_bytes = serialize_value(&"compacted_v2".to_string()).expect("Serialization failed");
     let static_slice: &'static [u8] = Box::leak(new_value_bytes.into_boxed_slice());
@@ -151,7 +151,7 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestRemoveRouter");
   // Route all keys; handler logic will check prefix
-  router_builder.add_route("{*path}", Arc::new(transient_remover_handler))?;
+  router_builder.add_route("/transient/{*path}", Arc::new(transient_remover_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_remove_prefix", filter_config)?;
@@ -159,7 +159,7 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
   let cf_handle = store.get_cf_handle(TEST_CF)?;
 
   // Write and flush the first key to create one SST file.
-  store.put(TEST_CF, "transient:data1", &"value1".to_string())?;
+  store.put(TEST_CF, "/transient/data1", &"value1".to_string())?;
   store.db_raw().flush_cf(&cf_handle)?;
 
   // Write and flush the second key to create a second SST file.
@@ -171,7 +171,7 @@ fn test_compaction_remove_by_prefix() -> StoreResult<()> {
     .db_raw()
     .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
-  assert!(store.get::<_, String>(TEST_CF, "transient:data1")?.is_none());
+  assert!(store.get::<_, String>(TEST_CF, "/transient/data1")?.is_none());
   assert_eq!(
     store.get::<_, String>(TEST_CF, "permanent:data2")?,
     Some("value2".to_string())
@@ -185,12 +185,12 @@ fn test_compaction_change_value() -> StoreResult<()> {
   rocksolid::compaction_filter::clear_compaction_filter_routes();
   let mut router_builder = CompactionFilterRouterBuilder::new();
   router_builder.operator_name("TestChangeRouter");
-  router_builder.add_route("{*path}", Arc::new(version_changer_handler))?;
+  router_builder.add_route("/version/{*path}", Arc::new(version_changer_handler))?;
   let filter_config = router_builder.build()?;
 
   let (store, _temp_dir) = setup_store_with_filter("db_change_value", filter_config)?;
 
-  store.put(TEST_CF, "version:key", &"original_v1".to_string())?;
+  store.put(TEST_CF, "/version/key", &"original_v1".to_string())?;
   store.put(TEST_CF, "other:key", &"some_value".to_string())?;
 
   let cf_handle = store.get_cf_handle(TEST_CF)?;
@@ -200,7 +200,7 @@ fn test_compaction_change_value() -> StoreResult<()> {
     .compact_range_cf(&cf_handle, None::<&[u8]>, None::<&[u8]>);
 
   assert_eq!(
-    store.get::<_, String>(TEST_CF, "version:key")?,
+    store.get::<_, String>(TEST_CF, "/version/key")?,
     Some("compacted_v2".to_string())
   );
   assert_eq!(

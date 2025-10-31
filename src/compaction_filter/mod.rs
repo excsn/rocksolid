@@ -1,9 +1,13 @@
+pub mod binary;
+
 use crate::config::RockSolidCompactionFilterRouterConfig;
 use crate::error::{StoreError, StoreResult};
+
 use matchit::{Params, Router};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use rocksdb::compaction_filter::Decision as RocksDbDecision;
+use std::collections::binary_heap;
 use std::sync::Arc;
 
 /// Signature for handler functions used by the compaction filter router.
@@ -107,7 +111,7 @@ pub fn router_compaction_filter_fn(level: u32, key_bytes: &[u8], value_bytes: &[
     Ok(key_str) => {
       let router_guard = COMPACTION_FILTER_ROUTER.read();
       if let Ok(match_result) = router_guard.at(key_str) {
-        let handler_arc = match_result.value; // This is Arc<dyn Fn...>
+        let handler_arc = match_result.value; 
         // Execute the matched handler
         return handler_arc(level, key_bytes, value_bytes, &match_result.params);
       } else {
