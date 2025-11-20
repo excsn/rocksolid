@@ -1,14 +1,29 @@
 #[cfg(feature = "base62")]
 pub mod base62;
 
+use crate::CFOperations;
 use crate::cf_store::RocksDbCFStore;
 use crate::config::RocksDbCFStoreConfig;
 use crate::error::{StoreError, StoreResult};
-use crate::CFOperations;
 
 use log::{error, info, warn};
-use rocksdb::{checkpoint::Checkpoint, IteratorMode, ReadOptions, DB};
+use rocksdb::{DB, IteratorMode, ReadOptions, checkpoint::Checkpoint};
 use std::path::Path;
+
+use rlimit::{Resource, getrlimit};
+
+const RLIM_INFINITY: u64 = u64::MAX;
+
+pub fn max_open_files_simple() -> Option<u64> {
+  getrlimit(Resource::NOFILE).ok().map(|(actual, _max)| actual)
+}
+
+pub fn fifo_compaction_allowed() -> bool {
+  match getrlimit(Resource::NOFILE) {
+    Ok((soft, _)) => soft == RLIM_INFINITY,
+    Err(_) => false,
+  }
+}
 
 /// Migrates data from a source RocksDB database to a destination RocksDB database,
 /// including all configured Column Families.
@@ -81,8 +96,7 @@ pub fn migrate_db(
       } else {
         // src_store.get_cf_handle() returns Arc<BoundColumnFamily>
         let handle = src_store.get_cf_handle(cf_name)?;
-        db_raw
-          .iterator_cf_opt(&handle, read_opts, IteratorMode::Start)
+        db_raw.iterator_cf_opt(&handle, read_opts, IteratorMode::Start)
       }
     };
 
@@ -123,8 +137,7 @@ pub fn migrate_db(
           db_raw.iterator_opt(IteratorMode::Start, read_opts)
         } else {
           let handle = src_store.get_cf_handle(cf_name)?;
-          db_raw
-            .iterator_cf_opt(&handle, read_opts, IteratorMode::Start)
+          db_raw.iterator_cf_opt(&handle, read_opts, IteratorMode::Start)
         }
       };
 

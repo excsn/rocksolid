@@ -362,10 +362,9 @@ impl PatternTuner for TuningProfile {
             fifo_opts.set_max_table_files_size((*size_mb as u64).saturating_mul(1024 * 1024));
             cf_options.tune_set_compaction_options_fifo(&fifo_opts); // This is the method from tunable_methods
           }
+          cf_options.set_max_open_files(-1);
           log::info!("[Tuner] CF '{}': Configured for FIFO compaction.", cf_name);
         }
-        // Prefix extractor would be set via custom_options or direct CfConfig,
-        // as the profile cannot instantiate the Arc<dyn SliceTransform>.
       }
 
       TuningProfile::SparseBitmap {
